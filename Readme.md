@@ -1,6 +1,6 @@
 # kdpeak
 
-kdpeak is a Python package designed for computational biologists, specializing in identifying genomic peaks from genomic reads in bed format using kernel density estimation (KDE). This robust, efficient, and user-friendly tool is specifically designed to handle high-throughput genomics data analysis.
+kdpeak is a Python package designed to identifying genomic peaks from genomic reads in bed format using kernel density estimation (KDE).
 
 ## Getting Started
 
