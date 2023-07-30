@@ -26,7 +26,7 @@ The package enables customization of parameters like KDE bandwidth, sequence bla
 Elementary usage:
 
 ```bash
-kdpeak reads.bed --frip 0.3 --out peaks.py
+kdpeak reads.bed --frip 0.3 --out peaks.bed
 ```
 
 ## Parameters
