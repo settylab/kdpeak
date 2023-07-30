@@ -29,12 +29,6 @@ Elementary usage:
 kdpeak reads.bed --frip 0.3 --out peaks.py
 ```
 
-To investigate the full list of adjustable parameters, use `-h` or `--help` flag:
-
-```bash
-kdpeak --help
-```
-
 ## Parameters
 
 ```bash
