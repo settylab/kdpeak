@@ -1,12 +1,17 @@
 from setuptools import setup, find_packages
 
+# read the contents of your README file
+from pathlib import Path
+
+this_directory = Path(__file__).parent
+
 setup(
     name="kdpeak",
     version="0.1.0",
     author="Dominik Otto",
     author_email="dotto@fredhutch.org",
     description="A tool to identify genomic peaks based on kernel density estimation.",
-    long_description=open("Readme.md").read(),
+    long_description=(this_directory / "README.md").read_text(),
     long_description_content_type="text/markdown",
     url="https://github.com/settylab/kdpeak",
     packages=find_packages(),
