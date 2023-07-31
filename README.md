@@ -1,5 +1,7 @@
 # kdpeak
 
+[![DOI](https://zenodo.org/badge/672132987.svg)](https://zenodo.org/badge/latestdoi/672132987)
+
 kdpeak is a Python package designed to identifying genomic peaks from genomic reads in bed format using kernel density estimation (KDE).
 
 ## Installation

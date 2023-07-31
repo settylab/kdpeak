@@ -1,0 +1,12 @@
+cff-version: 1.1.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Otto"
+    given-names: "Dominik J."
+    orcid: "https://orcid.org/0000-0002-6116-053X"
+  - family-names: "Setty"
+    given-names: "Manu"
+    orcid: "https://orcid.org/0000-0002-0344-2627"
+title: "settylab/kdpeak: v0.1.0"
+version: v0.1.0
+date-released: 2023-07-31
