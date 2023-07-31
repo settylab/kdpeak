@@ -43,10 +43,23 @@ def parse_arguments():
 
     parser.add_argument(
         "--out",
-        metavar="output_file",
+        metavar="output_file.bed",
         type=str,
         default="./peaks.bed",
-        help="Path to the output file where the results will be saved. Defaults to ./peaks.bed.",
+        help="""Path to the output file where the results will be saved. \
+            Peaks are saved in bed format with the columns: \
+            start, end, peak name, AUC (area under the cut density curve \
+            where cut-density is in cuts per 100 base pairs). Defaults to peaks.bed.""",
+    )
+
+    parser.add_argument(
+        "--summits-out",
+        metavar="summits_file.bed",
+        type=str,
+        help="""Path to the output file where the peak summits will be saved.\
+        The file will have columns for start, end (start+1), \
+        peak name, and summit height (in cuts per 100 base pairs). \
+        If nothing is specified the summits will not be saved.""",
     )
 
     parser.add_argument(
@@ -144,8 +157,14 @@ def main():
     out_file = args.out
     logger.info("Writing results to %s...", out_file)
     write_bed(bed[["seqname", "start", "end", "name", "auc"]], out_file)
+    
+    if out_file := args.summits_out:
+        logger.info("Writing summits to %s...", out_file)
+        bed["start"] = bed["summit"]
+        bed["end"] = bed["summit"]+1
+        write_bed(bed[["seqname", "start", "end", "name", "summit_height"]], out_file)
+        
     logger.info("Finished successfully.")
-
 
 if __name__ == "__main__":
     main()

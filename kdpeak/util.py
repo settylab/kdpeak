@@ -233,7 +233,7 @@ def make_kdes(
         cut_idx = (low_res_cuts - grid.min()).astype(int)
 
         _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
-        density *= len(events)
+        density *= len(events) * 100
 
         comb_df = pd.DataFrame(
             {
@@ -284,19 +284,6 @@ def mark_peaks(
 
 
 def track_to_interval(job):
-    """
-    Converts track data to interval representation.
-
-    Parameters
-    ----------
-    job : tuple
-        A tuple containing the combined data, step size, and sequence name.
-
-    Returns
-    -------
-    peaks : pd.DataFrame
-        DataFrame with peak intervals.
-    """
     loc_comb_data, step_size, seqname = job
 
     idx = np.insert(loc_comb_data["peak"].values.astype(int), 0, 0)
@@ -310,19 +297,26 @@ def track_to_interval(job):
         + loc_comb_data["peak"].astype(str)
     )
 
-    peak_location_df = loc_comb_data[loc_comb_data["peak"].values].set_index("location")
-    locations = peak_location_df.groupby("peak_name")["density"].idxmax()
+    peak_indices = loc_comb_data["peak"].values
+    peak_location_df = loc_comb_data.loc[peak_indices].set_index("location")
+
+    summit_locations = peak_location_df.groupby("peak_name")["density"].idxmax()
+    summit_heights = peak_location_df.loc[summit_locations, "density"]
+
     peak_groups = peak_location_df.reset_index().groupby("peak_name")
+
     start = peak_groups["location"].min().values - (step_size / 2)
     end = peak_groups["location"].max().values + (step_size / 2)
     means = peak_groups["density"].mean()
+
     peaks = pd.DataFrame(
         {
             "seqname": seqname,
             "start": start.astype(int),
             "end": end.astype(int),
             "mean": means,
-            "summit": locations,
+            "summit": summit_locations.values.astype(int),
+            "summit_height": summit_heights.values,
         }
     ).sort_values("start")
     return peaks

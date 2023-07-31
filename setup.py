@@ -7,7 +7,7 @@ this_directory = Path(__file__).parent
 
 setup(
     name="kdpeak",
-    version="0.1.1",
+    version="0.2.0",
     author="Dominik Otto",
     author_email="dotto@fredhutch.org",
     description="A tool to identify genomic peaks based on kernel density estimation.",

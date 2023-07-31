@@ -42,7 +42,14 @@ usage: kdpeak [-h] [--out OUTPUT_FILE] [-l LEVEL] [--logfile LOGFILE] [--blackli
 **Options:**
 
 - `-h, --help` - Show this help message and exit.
-- `--out OUTPUT_FILE` - Path to the output file to save the results. Default is ./peaks.bed.
+- `--out output_file.bed` - Path to the output file where the results will be saved.
+  Peaks are saved in bed format with the columns:
+  start, end, peak name, AUC (area under the cut density curve
+  where cut-density is in cuts per 100 base pairs). Defaults to peaks.bed.
+- `--summits-out summits_file.bed` - Path to the output file where the peak summits will be saved.
+  The file will have columns for start, end (start+1),
+  peak name, and summit height (in cuts per 100 base pairs).
+  If nothing is specified the summits will not be saved.
 - `-l LEVEL, --log LEVEL` - Set the logging level. Options include: DEBUG, INFO, WARNING, ERROR, CRITICAL. Default is INFO.
 - `--logfile LOGFILE` - Path to the file to write a detailed log.
 - `--blacklisted-seqs chrN [chrN ...]` - List of sequences (e.g., chromosomes) to exclude from peak calling. Input as space-separated values.
