@@ -227,7 +227,7 @@ def make_kdes(
         events = ebs_c1.get(seqname, pd.DataFrame())
         cuts = events["location"].values
 
-        low_res_cuts = np.floor(cuts / step)
+        low_res_cuts = np.round(cuts / step)
 
         grid = full_kde_grid(low_res_cuts)
         cut_idx = (low_res_cuts - grid.min()).astype(int)
