@@ -426,7 +426,7 @@ def name_peaks(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with a 'name' column added, which contains unique names for each peak.
     """
     name_dat = pd.DataFrame(
-        map(lambda x: ("_".join(x[:-2]), x[-2], x[-1]), list(df.index.str.split("_")))
+        map(lambda x: ("_".join(x[:-2]), x[-2], x[-1]), list(df.index.str.split("_"))),
         columns=["seqname", "interval", "is_peak"],
         index=df.index,
     )
