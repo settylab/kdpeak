@@ -291,9 +291,9 @@ def track_to_interval(job):
     loc_comb_data["peak_number"] = np.cumsum(indicator == 1)
     loc_comb_data["peak_name"] = (
         loc_comb_data["interval"]
-        + "_"
+        + "-"
         + loc_comb_data["peak_number"].astype(str)
-        + "_"
+        + "-"
         + loc_comb_data["peak"].astype(str)
     )
 
@@ -426,11 +426,11 @@ def name_peaks(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with a 'name' column added, which contains unique names for each peak.
     """
     name_dat = pd.DataFrame(
-        list(df.index.str.split("_")),
+        list(df.index.str.split("-")),
         columns=["seqname", "interval", "is_peak"],
         index=df.index,
     )
     df["name"] = (
-        name_dat["seqname"] + "_" + name_dat["interval"]
+        name_dat["seqname"] + "-" + name_dat["interval"]
     )
     return df
