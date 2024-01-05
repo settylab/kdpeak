@@ -195,7 +195,7 @@ def get_adaptive_kde(
     cut_locations, kernel="Gauss", xmin=None, xmax=None, grid=None
 ):
     """
-    Estimates the KDE of the given data points.
+    Estimates the KDE of the given data points using locally adaptive bandwidths as implemented in `AdaptiveKDE`.
 
     Parameters
     ----------
@@ -296,6 +296,7 @@ def write_kdes(
     kde_bw=200,
     blacklisted=list(),
     scale_factor = 1
+    adaptive = False
 ):
     """
     Computes KDEs for given events, with optional blacklist. Writes KDEs directly to BedGraph format without storing large dataframes in memory.
@@ -314,7 +315,8 @@ def write_kdes(
         List of sequences to exclude from KDE estimation.
     scale_factor: float or int, optional
         Densities will be multiplied by this value to account for differences in read depth. Defaults to 1 (no scaling).
-
+    adaptive: boolean, optional
+        if False, use fixed bandwidth `kde_bw`. If True, use locally adaptive KDE and ignore bandwidth specified by `kde_bw`.
     """
 
     sequences = set(ebs_c1.keys()) - set(blacklisted)
@@ -330,8 +332,12 @@ def write_kdes(
 
         grid = full_kde_grid(low_res_cuts)
         cut_idx = (low_res_cuts - grid.min()).astype(int)
-
-        _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
+        
+        
+        if adaptive:
+            _, density, bandwidths = get_adaptive_kde(low_res_cuts, grid = grid)
+        else:
+            _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
         density *= len(events) * (1000/step)
         
         if i != 0:
@@ -342,7 +348,7 @@ def write_kdes(
             {
                 "seqname": seqname,
                 "start": grid.astype(int) * step,
-                'end': (grid.astype(int) * step) + (step-1), 
+                'end': (grid.astype(int) * step) + (step), 
                 "density": density * scale_factor,
             }).to_csv(file_path, sep = "\t", mode = mode, index = False, header = False, chunksize = 10000)
 
