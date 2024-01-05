@@ -7,7 +7,7 @@ import logging
 from tqdm.auto import tqdm
 import pyarrow as pa
 import pyarrow.csv as csv
-
+from adaptivekde import ssvkernel
 
 def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
     """
@@ -191,8 +191,8 @@ def get_kde(
     ##TODO: return bandwidth
     return grid, density, kernel.bw
 
-def get_kde(
-    cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None
+def get_adaptive_kde(
+    cut_locations, kernel="Gauss", xmin=None, xmax=None, grid=None
 ):
     """
     Estimates the KDE of the given data points.
@@ -201,10 +201,9 @@ def get_kde(
     ----------
     cut_locations : array-like
         Locations of data points.
-    kde_bw : float, optional
-        Bandwidth for KDE estimation. Defaults to 500.
     kernel : str, optional
-        Name of the kernel to be used for KDE estimation. Defaults to "gaussian".
+        Name of the kernel to be used for KDE estimation. Choose from one of 'Boxcar', 'Laplace', 'Cauchy' and 'Gauss'. Default
+        value = 'Gauss'.
     xmin : int, optional
         Minimum value for the grid. If None, defaults to minimum value in cut_locations - 1.
     xmax : int, optional
@@ -218,14 +217,14 @@ def get_kde(
         Grid of points used for KDE estimation.
     density : np.ndarray
         Estimated densities at each point in the grid.
+    bandwidths: np.ndarray
+        Locally optimal bandwidths at each point in the grid.
     """
     if grid is None:
         grid = full_kde_grid(cut_locations, xmin, xmax)
-    kernel = FFTKDE(kernel=kernel, bw=kde_bw)
-    kernel = kernel.fit(cut_locations)
-    density = kernel.evaluate(grid)
+    density, t, bandwidths, gs, C, confb95, yb = ssvkernel(cut_locations, tin=grid)
     ##TODO: return bandwidth
-    return grid, density, kernel.bw
+    return grid, density, bandwidths
 
 def make_kdes(
     ebs_c1,
