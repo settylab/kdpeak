@@ -295,7 +295,7 @@ def write_kdes(
     step=10,
     kde_bw=200,
     blacklisted=list(),
-    scale_factor = 1
+    scale_factor = 1,
     adaptive = False
 ):
     """
