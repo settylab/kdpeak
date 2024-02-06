@@ -190,38 +190,6 @@ def get_kde(
     density = kernel.evaluate(grid)
     return grid, density
 
-def get_mellon_density(
-    cut_locations, cut_counts, xmin=None, xmax=None, grid=None, n_landmarks = 20000
-):
-    """
-    Estimates a function fitting the given data points using sparse Gausian Process regression.
-
-    Parameters
-    ----------
-    cut_locations : array-like
-        Locations of data points.
-    cut_counts: array-like
-        count values of to the locations in cut_locations.
-    xmin : int, optional
-        Minimum value for the grid. If None, defaults to minimum value in cut_locations - 1.
-    xmax : int, optional
-        Maximum value for the grid. If None, defaults to maximum value in cut_locations + 1.
-    grid : array-like, optional
-        Grid of points for KDE estimation. If None, a grid is generated using xmin and xmax.
-    n_landmarks: int, optional
-        the number of points to be used for sparse Gaussian Process regression. Default: 20,000
-    Returns
-    -------
-    grid : np.ndarray
-        Grid of points used for KDE estimation.
-    log_density : np.ndarray
-        Estimated log densities at each point in the grid.
-    """
-    if grid is None:
-        grid = full_kde_grid(cut_locations, xmin, xmax)
-    model = mellon.FunctionEstimator(n_landmarks = n_landmarks)
-    est = model.fit_predict(cut_locations, cut_counts, grid)
-    return grid, est
 
 def make_kdes(
     ebs_c1,
@@ -284,84 +252,6 @@ def make_kdes(
     comb_data = pd.concat(result_dfs, axis=0)
 
     return comb_data, signal_list_global
-def write_mellon(
-    records,
-    chrom_sizes_path,
-    file_path,
-    step=100,
-    sample_frac = .1,
-    blacklisted=list(),
-    scale_factor = 1,
-    predict_point = 'Start'
-):
-    """
-    Computes KDEs for given events, with optional blacklist. Writes KDEs directly to BedGraph format without storing large dataframes in memory.
-
-    Parameters
-    ----------
-    records: pd.DataFrame
-        tabular data object containing fragment locations with columns Chromosome, Start, and End
-    chrom_sizes_path: str
-        A string of the path to the .chrom.sizes file for the desired genome.
-    file_path: string
-        Path to output file.
-    step : int, optional
-        Step size for KDE grid. Defaults to 100.
-    sample_frac: float, optional
-        percentage of tiles with zero overlap to use for sparse GPR fit. Default: 0.1
-    blacklisted : list, optional
-        List of sequences to exclude from KDE estimation.
-    scale_factor: float or int, optional
-        Densities will be multiplied by this value to account for differences in read depth. Defaults to 1 (no scaling).
-    predict_point: string, default is ['Start']
-        Select whether 'Start' or 'End' of fragments will be used to predict coverage. Default: Start
-    """
-
-
-    assert records.shape[1] == 3, "`records` should have three columns with labels 'Chromosome', 'Start', 'End'."
-    assert list(records.columns) == ['Chromosome', 'Start', 'End'], "`records` should have three columns with labels 'Chromosome', 'Start', 'End'."
-    sequences = set(records['Chromosome'].values) - set(blacklisted)
-    ntotal = len(sequences)
-    print(sequences)
-    chrom_sizes = pd.read_csv(chrom_sizes_path, sep = '\t', header= None, index_col = 0)
-    chrom_sizes = chrom_sizes[~chrom_sizes.index.str.contains('_')][1].to_dict()
-    tiles = pr.genomicfeatures.tile_genome(genome = chrom_sizes, tile_size = step, tile_last = True)
-    for i, seqname in enumerate(sorted(sequences)):
-        logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
-        subset_records = records[records['Chromosome'] == seqname]
-
-        intervals = pr.PyRanges(subset_records)
-        overlaps = tiles[tiles.Chromosome == seqname].count_overlaps(intervals).as_df()
-        
-        data_idx = (overlaps[overlaps['NumberOverlaps'] == 0].sample(frac = sample_frac)).index
-        overlaps = overlaps[(overlaps['NumberOverlaps'] > 0) | overlaps.index.isin(data_idx)]
-        
-        tile_df = tiles[tiles.Chromosome == seqname].as_df()
-
-        _, density = get_mellon_density(overlaps[predict_point], overlaps['NumberOverlaps'], grid =tile_df[predict_point])
-        
-        if predict_point == 'Start':
-            start_coord = tile_df[predict_point]
-            end_coord = tile_df[predict_point] + step
-        elif predict_point == 'End':
-            start_coord = tile_df[predict_point] - step
-            end_coord = tile_df[predict_point]
-        else:
-            raise ValueError("predict point must be 'Start' or 'End'")
-            
-        start_coord = start_coord.where(start_coord > 0, 0)
-        end_coord = end_coord.where(end_coord <= chrom_sizes[seqname], chrom_sizes[seqname])
-        if i != 0:
-            mode = 'a'
-        else:
-            mode = 'w'
-        pd.DataFrame(
-            {
-                "seqname": seqname,
-                "start": start_coord,
-                'end': end_coord,
-                "density": density * scale_factor,
-            }).to_csv(file_path, sep = "\t", mode = mode, index = False, header = False, chunksize = 100000)
 
 def write_kdes(
     ebs_c1,
