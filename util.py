@@ -1,13 +1,13 @@
 from typing import Dict
 import numpy as np
 import pandas as pd
-from KDEpy import FFTKDE
+from KDEpy import FFTKDE, bw_selection
 import multiprocessing
 import logging
 from tqdm.auto import tqdm
-import pyarrow as pa
-import pyarrow.csv as csv
-from adaptivekde import ssvkernel
+import mellon
+import pyranges as pr
+import numbers
 
 def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
     """
@@ -165,8 +165,8 @@ def get_kde(
     ----------
     cut_locations : array-like
         Locations of data points.
-    kde_bw : float, optional
-        Bandwidth for KDE estimation. Defaults to 500.
+    kde_bw : float or str, optional
+        Bandwidth for KDE estimation. Defaults to 500. 
     kernel : str, optional
         Name of the kernel to be used for KDE estimation. Defaults to "gaussian".
     xmin : int, optional
@@ -188,43 +188,40 @@ def get_kde(
     kernel = FFTKDE(kernel=kernel, bw=kde_bw)
     kernel = kernel.fit(cut_locations)
     density = kernel.evaluate(grid)
-    ##TODO: return bandwidth
-    return grid, density, kernel.bw
+    return grid, density
 
-def get_adaptive_kde(
-    cut_locations, kernel="Gauss", xmin=None, xmax=None, grid=None
+def get_mellon_density(
+    cut_locations, cut_counts, xmin=None, xmax=None, grid=None, n_landmarks = 20000
 ):
     """
-    Estimates the KDE of the given data points using locally adaptive bandwidths as implemented in `AdaptiveKDE`.
+    Estimates a function fitting the given data points using sparse Gausian Process regression.
 
     Parameters
     ----------
     cut_locations : array-like
         Locations of data points.
-    kernel : str, optional
-        Name of the kernel to be used for KDE estimation. Choose from one of 'Boxcar', 'Laplace', 'Cauchy' and 'Gauss'. Default
-        value = 'Gauss'.
+    cut_counts: array-like
+        count values of to the locations in cut_locations.
     xmin : int, optional
         Minimum value for the grid. If None, defaults to minimum value in cut_locations - 1.
     xmax : int, optional
         Maximum value for the grid. If None, defaults to maximum value in cut_locations + 1.
     grid : array-like, optional
         Grid of points for KDE estimation. If None, a grid is generated using xmin and xmax.
-
+    n_landmarks: int, optional
+        the number of points to be used for sparse Gaussian Process regression. Default: 20,000
     Returns
     -------
     grid : np.ndarray
         Grid of points used for KDE estimation.
-    density : np.ndarray
-        Estimated densities at each point in the grid.
-    bandwidths: np.ndarray
-        Locally optimal bandwidths at each point in the grid.
+    log_density : np.ndarray
+        Estimated log densities at each point in the grid.
     """
     if grid is None:
         grid = full_kde_grid(cut_locations, xmin, xmax)
-    density, t, bandwidths, gs, C, confb95, yb = ssvkernel(cut_locations, tin=grid)
-    ##TODO: return bandwidth
-    return grid, density, bandwidths
+    model = mellon.FunctionEstimator(n_landmarks = n_landmarks)
+    est = model.fit_predict(cut_locations, cut_counts, grid)
+    return grid, est
 
 def make_kdes(
     ebs_c1,
@@ -287,7 +284,84 @@ def make_kdes(
     comb_data = pd.concat(result_dfs, axis=0)
 
     return comb_data, signal_list_global
+def write_mellon(
+    records,
+    chrom_sizes_path,
+    file_path,
+    step=100,
+    sample_frac = .1,
+    blacklisted=list(),
+    scale_factor = 1,
+    predict_point = 'Start'
+):
+    """
+    Computes KDEs for given events, with optional blacklist. Writes KDEs directly to BedGraph format without storing large dataframes in memory.
 
+    Parameters
+    ----------
+    records: pd.DataFrame
+        tabular data object containing fragment locations with columns Chromosome, Start, and End
+    chrom_sizes_path: str
+        A string of the path to the .chrom.sizes file for the desired genome.
+    file_path: string
+        Path to output file.
+    step : int, optional
+        Step size for KDE grid. Defaults to 100.
+    sample_frac: float, optional
+        percentage of tiles with zero overlap to use for sparse GPR fit. Default: 0.1
+    blacklisted : list, optional
+        List of sequences to exclude from KDE estimation.
+    scale_factor: float or int, optional
+        Densities will be multiplied by this value to account for differences in read depth. Defaults to 1 (no scaling).
+    predict_point: string, default is ['Start']
+        Select whether 'Start' or 'End' of fragments will be used to predict coverage. Default: Start
+    """
+
+
+    assert records.shape[1] == 3, "`records` should have three columns with labels 'Chromosome', 'Start', 'End'."
+    assert list(records.columns) == ['Chromosome', 'Start', 'End'], "`records` should have three columns with labels 'Chromosome', 'Start', 'End'."
+    sequences = set(records['Chromosome'].values) - set(blacklisted)
+    ntotal = len(sequences)
+    print(sequences)
+    chrom_sizes = pd.read_csv(chrom_sizes_path, sep = '\t', header= None, index_col = 0)
+    chrom_sizes = chrom_sizes[~chrom_sizes.index.str.contains('_')][1].to_dict()
+    tiles = pr.genomicfeatures.tile_genome(genome = chrom_sizes, tile_size = step, tile_last = True)
+    for i, seqname in enumerate(sorted(sequences)):
+        logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
+        subset_records = records[records['Chromosome'] == seqname]
+
+        intervals = pr.PyRanges(subset_records)
+        overlaps = tiles[tiles.Chromosome == seqname].count_overlaps(intervals).as_df()
+        
+        data_idx = (overlaps[overlaps['NumberOverlaps'] == 0].sample(frac = sample_frac)).index
+        overlaps = overlaps[(overlaps['NumberOverlaps'] > 0) | overlaps.index.isin(data_idx)]
+        
+        tile_df = tiles[tiles.Chromosome == seqname].as_df()
+
+        _, density = get_mellon_density(overlaps[predict_point], overlaps['NumberOverlaps'], grid =tile_df[predict_point])
+        
+        if predict_point == 'Start':
+            start_coord = tile_df[predict_point]
+            end_coord = tile_df[predict_point] + step
+        elif predict_point == 'End':
+            start_coord = tile_df[predict_point] - step
+            end_coord = tile_df[predict_point]
+        else:
+            raise ValueError("predict point must be 'Start' or 'End'")
+            
+        start_coord = start_coord.where(start_coord > 0, 0)
+        end_coord = end_coord.where(end_coord <= chrom_sizes[seqname], chrom_sizes[seqname])
+        if i != 0:
+            mode = 'a'
+        else:
+            mode = 'w'
+        pd.DataFrame(
+            {
+                "seqname": seqname,
+                "start": start_coord,
+                'end': end_coord,
+                "density": density * scale_factor,
+            }).to_csv(file_path, sep = "\t", mode = mode, index = False, header = False, chunksize = 100000)
 
 def write_kdes(
     ebs_c1,
@@ -296,7 +370,6 @@ def write_kdes(
     kde_bw=200,
     blacklisted=list(),
     scale_factor = 1,
-    adaptive = False
 ):
     """
     Computes KDEs for given events, with optional blacklist. Writes KDEs directly to BedGraph format without storing large dataframes in memory.
@@ -309,21 +382,44 @@ def write_kdes(
         Path to output file.
     step : int, optional
         Step size for KDE grid. Defaults to 10.
-    kde_bw : float, optional
+    kde_bw : int or string, optional
         Bandwidth for KDE estimation. Defaults to 200.
     blacklisted : list, optional
         List of sequences to exclude from KDE estimation.
     scale_factor: float or int, optional
         Densities will be multiplied by this value to account for differences in read depth. Defaults to 1 (no scaling).
-    adaptive: boolean, optional
-        if False, use fixed bandwidth `kde_bw`. If True, use locally adaptive KDE and ignore bandwidth specified by `kde_bw`.
+        
+    Returns
+    -------
+    bandwidths: arraylike
+        the bandwidths of the KDE for each chromosome.
     """
 
     sequences = set(ebs_c1.keys()) - set(blacklisted)
     ntotal = len(sequences)
+    all_events = pd.concat(ebs_c1)
+    cuts = all_events['location'].values
+    low_res_cuts = np.round(cuts/step)
+    del all_events ## delete to conserve memory
+    # validate user input 
+    if (isinstance(kde_bw, numbers.Number) | kde_bw.isnumeric()): #use user specified bandwith
+        bandwidth = kde_bw
+    elif isinstance(kde_bw, str): #automated bandwidth selection 
 
+        if kde_bw == 'silverman':
+            bandwidth = bw_selection.silvermans_rule(low_res_cuts.reshape(-1,1))
+        elif kde_bw == 'ISJ':
+            bandwidth = bw_selection.improved_sheather_jones(low_res_cuts.reshape(-1,1))
+        elif kde_bw.isnumeric():
+            bandwidth = int(kde_bw) 
+        else:
+            raise ValueError("kde_bw must be one of the options: 'ISJ', 'silverman'")
+
+    else:
+        bandwidth = int(kde_bw)
+    #Compute KDE for each chromosome using bandwidth    
     for i, seqname in enumerate(sorted(sequences)):
-        #logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
+        logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
 
         events = ebs_c1.get(seqname, pd.DataFrame())
         cuts = events["location"].values
@@ -332,12 +428,8 @@ def write_kdes(
 
         grid = full_kde_grid(low_res_cuts)
         cut_idx = (low_res_cuts - grid.min()).astype(int)
-        
-        
-        if adaptive:
-            _, density, bandwidths = get_adaptive_kde(low_res_cuts, grid = grid)
-        else:
-            _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
+        _, density = get_kde(low_res_cuts, kde_bw=bandwidth, grid=grid)
+            
         density *= len(events) * (1000/step)
         
         if i != 0:
@@ -351,72 +443,7 @@ def write_kdes(
                 'end': (grid.astype(int) * step) + (step), 
                 "density": density * scale_factor,
             }).to_csv(file_path, sep = "\t", mode = mode, index = False, header = False, chunksize = 10000)
-
-def kde_bedgraph(
-    ebs_c1,
-    path,
-    step=10,
-    kde_bw=200,
-    blacklisted=list(),
-):
-    """
-    Computes KDEs for given events, with optional blacklist. Writes output to disk to prevent excessive memory usage.
-    Parameters
-    ----------
-    ebs_c1 : dict
-        Dictionary mapping sequence names to events.
-    path: str
-        str of file path for writing output
-    step : int, optional
-        Step size for KDE grid. Defaults to 10.
-    kde_bw : float, optional
-        Bandwidth for KDE estimation. Defaults to 200.
-    blacklisted : list, optional
-        List of sequences to exclude from KDE estimation.
-
-    Returns
-    -------
-
-    """
-    import gc
-    sequences = set(ebs_c1.keys()) - set(blacklisted)
-    result_dfs = list()
-    ntotal = len(sequences)
-    schema = pa.schema({'seqname': pa.string(), 'start': pa.int32(), 'end': pa.int32(), 'density': pa.float32() })
-    file = pa.output_stream(path)
-    writer =  csv.CSVWriter(file, schema, write_options = csv.WriteOptions(include_header = False, delimiter = "\t"))
-    for i, seqname in enumerate(sorted(sequences)):
-        #logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
-
-        events = ebs_c1.get(seqname, pd.DataFrame())
-        cuts = events["location"].values
-
-        low_res_cuts = np.round(cuts / step)
-
-        grid = full_kde_grid(low_res_cuts)
-        cut_idx = (low_res_cuts - grid.min()).astype(int)
-
-        _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
-        density *= len(events) * 100
-
-        comb_df = pd.DataFrame(
-            {
-                "seqname": seqname,
-                "start": grid * step,
-                "end": (grid * step) + (step -1),
-                "density": density,
-            }
-        )
-        comb_df['start'] = comb_df['start'].astype(int)
-        comb_df['end'] = comb_df['end'].astype(int)
-        comb_df.sort_values(['seqname', 'start', 'end'])
-        table = pa.Table.from_pandas(comb_df, preserve_index = False)
-        del(comb_df)
-        writer.write(table)
-        del(table)
-        gc.collect()
-    writer.close()
-    file.close()
+    return bandwidth
 
 def mark_peaks(
     comb_data,
@@ -448,7 +475,36 @@ def mark_peaks(
     logger.info(msg)
 
     return comb_data
+def mark_peaks_prominence(
+    comb_data,
+    signal_list_global,
+    fraction,
+):
+    """
+    Marks peaks in the combined data based on a given density values.
 
+    Parameters
+    ----------
+    comb_data : pd.DataFrame
+        DataFrame with combined data.
+    signal_list_global : list
+        List of signal densities for each cut.
+    fraction : float
+        Fraction of cuts to consider to be in peak.
+
+    Returns
+    -------
+    comb_data : pd.DataFrame
+        DataFrame with peaks marked.
+    """
+
+    bound = np.quantile(np.hstack(signal_list_global), 1 - fraction)
+    comb_data["peak"] = comb_data["density"] > bound
+    fraction_selected = comb_data["peak"].sum() / len(comb_data["peak"])
+    msg = f"{fraction_selected:.2%} of genome covered by peaks."
+    logger.info(msg)
+
+    return comb_data
 
 def track_to_interval(job):
     loc_comb_data, step_size, seqname = job
