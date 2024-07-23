@@ -65,7 +65,7 @@ def parse_arguments():
 
     parser.add_argument(
         "--density-out",
-        metavar="density_file.bed",
+        metavar="density_file.bw",
         type=str,
         help="""Path to the output file where the event density will be saved.\
         The event density is the internally computed signal on which the peaks \

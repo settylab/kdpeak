@@ -65,7 +65,7 @@ def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
     """
     bed_df.to_csv(out_path, sep="\t", header=False, index=False)
 
-def write_bigwig(comb_data: pd.DataFrame, sizes_file: str, span: int = 10, out_path: str) -> None:
+def write_bigwig(comb_data: pd.DataFrame, sizes_file: str, span: int, out_path: str) -> None:
     """
     Write a BigWig file from a pandas DataFrame containing genomic data.
 
