@@ -19,6 +19,7 @@ setup(
         "numpy>=1.20.0",
         "pandas>=1.3.0",
         "KDEpy>=1.0.6",
+        "pyBigWig>=0.3.22",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",

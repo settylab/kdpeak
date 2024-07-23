@@ -19,6 +19,7 @@ from .util import (
     include_auc,
     name_peaks,
     write_bed,
+    write_bigwig,
     setup_logging,
 )
 
@@ -60,6 +61,26 @@ def parse_arguments():
         The file will have columns for start, end (start+1), \
         peak name, and summit height (in cuts per 100 base pairs). \
         If nothing is specified the summits will not be saved.""",
+    )
+
+    parser.add_argument(
+        "--density-out",
+        metavar="density_file.bed",
+        type=str,
+        help="""Path to the output file where the event density will be saved.\
+        The event density is the internally computed signal on which the peaks \
+        are called based on a cutoff. It will be saved in the bigwig format."""
+    )
+
+    parser.add_argument(
+        "--chrom-sizes",
+        help="""Chromosome sizes file with the two columns: seqname and size.
+        You can use a script like
+        https://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/fetchChromSizes
+        to fetch the file.
+        """,
+        metavar="chrom-sizes-file",
+        type=str,
     )
 
     parser.add_argument(
@@ -163,6 +184,17 @@ def main():
         bed["start"] = bed["summit"]
         bed["end"] = bed["summit"]+1
         write_bed(bed[["seqname", "start", "end", "name", "summit_height"]], out_file)
+
+    if out_file := args.density_out:
+        if not args.chrom_sizes:
+            message = """
+                Please specify a file containing the chromosome sizes file
+                in --chrom-sizes to make bigwigs with the density values.
+            """
+            logger.error(message)
+            raise ValueError(message)
+        logger.info("Writing density to %s...", out_file)
+        write_bigwig(comb_data, out_file, sizes_file=args.chrom_sizes, span=args.span)
         
     logger.info("Finished successfully.")
 

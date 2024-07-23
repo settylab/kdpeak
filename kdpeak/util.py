@@ -2,6 +2,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 from KDEpy import FFTKDE
+import pyBigWig
 import multiprocessing
 import logging
 
@@ -63,6 +64,78 @@ def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
         Path where the .bed file should be written.
     """
     bed_df.to_csv(out_path, sep="\t", header=False, index=False)
+
+def write_bigwig(comb_data: pd.DataFrame, sizes_file: str, span: int = 10, out_path: str) -> None:
+    """
+    Write a BigWig file from a pandas DataFrame containing genomic data.
+
+    Parameters:
+    - comb_data (pd.DataFrame): A DataFrame with columns 'seqname', 'location', and 'density'.
+      - 'seqname' (str): Chromosome or sequence name.
+      - 'location' (int): Genomic location.
+      - 'density' (float): Density value at the given location.
+    - sizes_file (str): Path to a file containing chromosome sizes. The file should have two columns: chromosome name and size.
+    - span (int): The span (in base pairs) for each data point in the BigWig file. Default is 10.
+    - out_path (str): Path to the output BigWig file.
+    
+    Returns:
+    - None
+
+    Raises:
+    - ValueError: If 'location' values are negative or exceed the chromosome size.
+
+    Example:
+    >>> sizes_file = 'chrom_sizes.txt'
+    >>> data = {'seqname': ['chr1', 'chr1', 'chr2'], 'location': [1000, 1010, 2000], 'density': [0.5, 0.8, 0.3]}
+    >>> comb_data = pd.DataFrame(data)
+    >>> write_bigwig(comb_data, sizes_file, span=10, out_path='output.bw')
+    """
+
+    # Read chromosome sizes from file
+    chrom_sizes = {}
+    try:
+        with open(sizes_file, "r") as fl:
+            for line in fl:
+                seq, size = line.split()
+                chrom_sizes[seq] = int(size)
+        logger.info(f"Read chromosome sizes from {sizes_file}")
+    except Exception as e:
+        logger.error(f"Error reading sizes_file: {e}")
+        raise
+
+    # Ensure all sequences in comb_data are in the chromosome sizes file
+    all_seqs = comb_data["seqname"].unique()
+    missing_seqs = [seq for seq in all_seqs if seq not in chrom_sizes]
+    if missing_seqs:
+        error_message = f"Sequences {missing_seqs} are missing in the chromosome sizes file."
+        logger.error(error_message)
+        raise ValueError(error_message)
+
+    with pyBigWig.open(out_path, "w") as bw:
+        # Add header with chromosome sizes
+        bw.addHeader(list(sorted(chrom_sizes.items())))
+
+        # Group data by sequence name (chromosome)
+        for seqname, data in comb_data.groupby("seqname"):
+            if seqname not in chrom_sizes:
+                logger.warning(f"Skipping sequence {seqname} not found in chromosome sizes")
+                continue
+
+            # Ensure no negative locations and locations do not exceed chromosome size
+            mask = (data["location"] >= 0) & (data["location"] <= chrom_sizes[seqname])
+            df = data.loc[mask, :]
+
+            if df.empty:
+                logger.warning(f"No valid data points for sequence {seqname}")
+                continue
+
+            # Write data to BigWig
+            bw.addEntries(
+                seqname,
+                df["location"].values,
+                span=span,
+                values=df["density"].values,
+            )
 
 
 def events_from_intervals(interval_df: pd.DataFrame) -> pd.DataFrame:
