@@ -347,6 +347,7 @@ def tracks_to_intervals(comb_data, step_size):
         for peaks in pool.imap(track_to_interval, jobs, 10):
             peaks_list.append(peaks)
     peaks = pd.concat(peaks_list, axis=0)
+    peaks["start"] = peaks["start"].clip(lower=0)
     peaks["length"] = peaks["end"] - peaks["start"]
     return peaks
 
