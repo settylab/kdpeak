@@ -112,10 +112,8 @@ def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: 
         raise ValueError(error_message)
 
     with pyBigWig.open(out_path, "w") as bw:
-        # Add header with chromosome sizes
         bw.addHeader(list(sorted(chrom_sizes.items())))
 
-        # Group data by sequence name (chromosome)
         for seqname, data in comb_data.groupby("seqname"):
             if seqname not in chrom_sizes:
                 logger.warning(f"Skipping sequence {seqname} not found in chromosome sizes")
@@ -129,11 +127,11 @@ def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: 
                 logger.warning(f"No valid data points for sequence {seqname}")
                 continue
 
-            # Write data to BigWig
             bw.addEntries(
                 seqname,
-                df["location"].values,
+                int(df["location"].min()),
                 span=span,
+                step=span,
                 values=df["density"].values,
             )
 

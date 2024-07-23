@@ -75,6 +75,7 @@ def parse_arguments():
     parser.add_argument(
         "--chrom-sizes",
         help="""Chromosome sizes file with the two columns: seqname and size.
+        This file is only needed if --density-out is specified.
         You can use a script like
         https://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/fetchChromSizes
         to fetch the file.
@@ -113,8 +114,8 @@ def parse_arguments():
         "--kde-bw",
         metavar="float",
         type=float,
-        default=200,
-        help="Bandwidth (standard deviation, sigma) for the kernel density estimation (KDE). Default is 200.",
+        default=20,
+        help="Bandwidth (standard deviation, sigma) for the kernel density estimation (KDE). Default is 20.",
     )
 
     parser.add_argument(
