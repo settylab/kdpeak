@@ -65,7 +65,7 @@ def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
     """
     bed_df.to_csv(out_path, sep="\t", header=False, index=False)
 
-def write_bigwig(comb_data: pd.DataFrame, sizes_file: str, span: int, out_path: str) -> None:
+def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: int) -> None:
     """
     Write a BigWig file from a pandas DataFrame containing genomic data.
 
@@ -305,8 +305,8 @@ def make_kdes(
         grid = full_kde_grid(low_res_cuts)
         cut_idx = (low_res_cuts - grid.min()).astype(int)
 
-        _, density = get_kde(low_res_cuts, kde_bw=kde_bw, grid=grid)
-        density *= len(events) * 100
+        _, density = get_kde(low_res_cuts, kde_bw=kde_bw / step, grid=grid)
+        density *= len(events) * 100 / step
 
         comb_df = pd.DataFrame(
             {
