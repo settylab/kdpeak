@@ -20,6 +20,8 @@ setup(
         "pandas>=1.3.0",
         "KDEpy>=1.0.6",
         "pyBigWig>=0.3.22",
+        "scipy>=1.7.0",
+        "scikit-learn>=1.0.0",
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -33,6 +35,7 @@ setup(
     entry_points={
         "console_scripts": [
             "kdpeak=kdpeak.core:main",
+            "bwops=kdpeak.bwops:main",
         ],
     },
 )

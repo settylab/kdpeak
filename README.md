@@ -86,6 +86,51 @@ fetchChromSizes hg38 > hg38.chrom.sizes
 
 The BigWig file contains the event density values (in cuts per 100 base pairs) that are used internally for peak calling. These files can be loaded into genome browsers like IGV or JBrowse to visualize the underlying signal alongside the called peaks.
 
+## BigWig Operations Tool (bwops)
+
+The `bwops` utility provides mathematical operations and regression analysis on BigWig files:
+
+### Basic Operations
+
+```bash
+# Add multiple BigWig files
+bwops add file1.bw file2.bw file3.bw --out sum.bw --chrom-sizes hg38.chrom.sizes
+
+# Multiply BigWig files (convolution)
+bwops multiply signal1.bw signal2.bw --out product.bw --chrom-sizes hg38.chrom.sizes
+
+# Output to different formats
+bwops add file1.bw file2.bw --out results.csv --format csv
+```
+
+### Regression Analysis
+
+```bash
+# Linear regression with R-style formula
+bwops regress --formula "target.bw ~ predictor1.bw + predictor2.bw" \
+              --out-prediction predictions.bw \
+              --out-residuals residuals.bw \
+              --out-stats stats.json \
+              --chrom-sizes hg38.chrom.sizes
+
+# Include interaction terms
+bwops regress --formula "target.bw ~ predictor1.bw + predictor2.bw + predictor1.bw*predictor2.bw" \
+              --out-prediction predictions.csv --format csv
+
+# Logistic regression
+bwops regress --formula "binary_target.bw ~ predictor.bw" --type logistic \
+              --out-prediction logistic_pred.bw --chrom-sizes hg38.chrom.sizes
+```
+
+### Options
+
+- `--region chr:start-end`: Limit analysis to specific genomic region
+- `--chromosomes chr1 chr2`: Analyze only specified chromosomes  
+- `--span INT`: Resolution in base pairs (default: 10)
+- `--format`: Output format (bigwig, csv, tsv, bed, json)
+
+The regression analysis prints summary statistics including R², p-values, and fitted coefficients to stdout, and can output predictions, residuals, and detailed statistics to separate files.
+
 ## Disclaimer
 
 kdpeak, being in its Alpha stage, encourages usage with care. We warmly welcome users to report any issues experienced during utilization. Together, we can enhance kdpeak for a better genomic analysis experience.
