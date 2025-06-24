@@ -1,10 +1,11 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import numpy as np
 import pandas as pd
 from KDEpy import FFTKDE
 import pyBigWig
 import multiprocessing
 import logging
+import re
 
 
 def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
@@ -333,10 +334,79 @@ def get_chromosome_size_estimate(events_df: pd.DataFrame) -> int:
     return int(events_df['location'].max())
 
 
-def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame], 
-                           chrom_sizes_file: Optional[str] = None) -> List[str]:
+def filter_chromosomes(chromosome_list: List[str], 
+                      exclude_contigs: bool = False,
+                      chromosome_pattern: Optional[str] = None) -> List[str]:
     """
-    Sort chromosomes by size (largest first) with robust fallback ordering.
+    Filter chromosome list based on exclusion rules and pattern matching.
+    
+    Parameters
+    ----------
+    chromosome_list : list
+        List of chromosome names to filter.
+    exclude_contigs : bool, optional
+        If True, exclude chromosomes containing common contig keywords.
+    chromosome_pattern : str, optional
+        Regex pattern - only include chromosomes matching this pattern.
+    
+    Returns
+    -------
+    list
+        Filtered list of chromosome names.
+    """
+    filtered_chroms = chromosome_list.copy()
+    
+    # Apply contig exclusion
+    if exclude_contigs:
+        contig_keywords = [
+            'random', 'Un', 'alt', 'patch', 'hap', 'scaffold', 'contig', 
+            'chrM', 'chrMT', 'chrEBV', 'GL', 'KI', 'JH'  # Common NCBI/UCSC prefixes
+        ]
+        
+        before_count = len(filtered_chroms)
+        filtered_chroms = [
+            chrom for chrom in filtered_chroms
+            if not any(keyword.lower() in chrom.lower() for keyword in contig_keywords)
+        ]
+        excluded_count = before_count - len(filtered_chroms)
+        
+        if excluded_count > 0:
+            logger.info(f"Excluded {excluded_count} contigs/scaffolds")
+            logger.debug(f"Remaining chromosomes: {', '.join(sorted(filtered_chroms))}")
+    
+    # Apply pattern matching
+    if chromosome_pattern:
+        try:
+            pattern = re.compile(chromosome_pattern)
+            before_count = len(filtered_chroms)
+            filtered_chroms = [
+                chrom for chrom in filtered_chroms
+                if pattern.match(chrom)
+            ]
+            excluded_count = before_count - len(filtered_chroms)
+            
+            if excluded_count > 0:
+                logger.info(f"Pattern '{chromosome_pattern}' excluded {excluded_count} chromosomes")
+                logger.debug(f"Matching chromosomes: {', '.join(sorted(filtered_chroms))}")
+                
+        except re.error as e:
+            logger.error(f"Invalid regex pattern '{chromosome_pattern}': {e}")
+            raise ValueError(f"Invalid regex pattern: {e}")
+    
+    if not filtered_chroms:
+        logger.warning("No chromosomes remain after filtering")
+    else:
+        logger.info(f"Processing {len(filtered_chroms)} chromosomes after filtering")
+    
+    return filtered_chroms
+
+
+def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame], 
+                           chrom_sizes_file: Optional[str] = None,
+                           exclude_contigs: bool = False,
+                           chromosome_pattern: Optional[str] = None) -> List[str]:
+    """
+    Sort chromosomes by size (largest first) with robust fallback ordering and filtering.
     
     Parameters
     ----------
@@ -345,20 +415,37 @@ def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame],
     chrom_sizes_file : str, optional
         Path to chromosome sizes file. If provided, uses actual sizes.
         If not provided, estimates sizes from data.
+    exclude_contigs : bool, optional
+        If True, exclude contigs/scaffolds with common keywords.
+    chromosome_pattern : str, optional
+        Regex pattern - only include chromosomes matching this pattern.
     
     Returns
     -------
     list
-        List of chromosome names sorted by size (largest first).
+        List of chromosome names sorted by size (largest first) after filtering.
     """
+    # Start with all available chromosomes
+    all_chroms = list(ebs_c1.keys())
+    
+    # Apply filtering
+    filtered_chroms = filter_chromosomes(
+        all_chroms, 
+        exclude_contigs=exclude_contigs,
+        chromosome_pattern=chromosome_pattern
+    )
+    
+    if not filtered_chroms:
+        return []
+    
     # Try to read actual chromosome sizes if file is provided
     actual_chrom_sizes = {}
     if chrom_sizes_file:
         actual_chrom_sizes = read_chrom_sizes_file(chrom_sizes_file)
     
-    # Calculate size estimates for each chromosome
+    # Calculate size estimates for each filtered chromosome
     chrom_sizes = []
-    for seqname in ebs_c1.keys():
+    for seqname in filtered_chroms:
         if seqname in actual_chrom_sizes:
             # Use actual chromosome size
             size = actual_chrom_sizes[seqname]
@@ -391,9 +478,11 @@ def make_kdes(
     kde_bw=200,
     blacklisted=list(),
     chrom_sizes_file=None,
+    exclude_contigs=False,
+    chromosome_pattern=None,
 ):
     """
-    Computes KDEs for given events, with optional blacklist.
+    Computes KDEs for given events, with optional blacklist and filtering.
     Processes chromosomes in order of decreasing size for better user feedback.
 
     Parameters
@@ -408,6 +497,10 @@ def make_kdes(
         List of sequences to exclude from KDE estimation.
     chrom_sizes_file : str, optional
         Path to chromosome sizes file. If provided, uses actual sizes for sorting.
+    exclude_contigs : bool, optional
+        If True, exclude contigs/scaffolds with common keywords.
+    chromosome_pattern : str, optional
+        Regex pattern - only include chromosomes matching this pattern.
 
     Returns
     -------
@@ -420,8 +513,13 @@ def make_kdes(
     # Filter out blacklisted sequences
     available_sequences = {k: v for k, v in ebs_c1.items() if k not in blacklisted}
     
-    # Sort chromosomes by size (largest first)
-    sorted_sequences = sort_chromosomes_by_size(available_sequences, chrom_sizes_file)
+    # Sort chromosomes by size (largest first) with filtering
+    sorted_sequences = sort_chromosomes_by_size(
+        available_sequences, 
+        chrom_sizes_file=chrom_sizes_file,
+        exclude_contigs=exclude_contigs,
+        chromosome_pattern=chromosome_pattern
+    )
     
     result_dfs = list()
     ntotal = len(sorted_sequences)

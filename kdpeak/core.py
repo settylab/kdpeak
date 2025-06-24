@@ -143,6 +143,19 @@ def parse_arguments():
         help="Resolution of the analysis in base pairs, which determines the granularity of the KDE and peak calling. Default is 10.",
     )
 
+    parser.add_argument(
+        "--exclude-contigs",
+        action="store_true",
+        help="Exclude contigs/scaffolds containing common keywords: random, Un, alt, patch, hap, scaffold, contig, chrM, chrMT.",
+    )
+
+    parser.add_argument(
+        "--chromosome-pattern",
+        metavar="regex",
+        type=str,
+        help="Include only chromosomes matching this regex pattern (e.g., 'chr[1-9XY]+' for human main chromosomes).",
+    )
+
     return parser.parse_args()
 
 
@@ -164,6 +177,8 @@ def main():
         kde_bw=args.kde_bw,
         blacklisted=args.blacklisted_seqs,
         chrom_sizes_file=args.chrom_sizes,
+        exclude_contigs=args.exclude_contigs,
+        chromosome_pattern=args.chromosome_pattern,
     )
 
     logger.info("Calling peaks.")
