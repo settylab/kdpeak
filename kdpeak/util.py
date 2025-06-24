@@ -35,6 +35,7 @@ logger = setup_logging()
 def read_bed(file_path: str) -> pd.DataFrame:
     """
     Reads a .bed file and returns it as a pandas DataFrame.
+    Only reads the first 3 columns (chromosome, start, end) as required for peak calling.
 
     Parameters
     ----------
@@ -44,18 +45,35 @@ def read_bed(file_path: str) -> pd.DataFrame:
     Returns
     -------
     bed_content : pd.DataFrame
-        A DataFrame containing the .bed file content.
+        A DataFrame containing the .bed file content with columns: seqname, start, end.
     """
-    header = {0: "seqname", 1: "start", 2: "end"}
-    
     # Read only the first 3 columns to handle variable column counts in BED files
+    # Use string dtype initially to handle any mixed types, then convert
     bed_content = pd.read_csv(
         file_path, 
         delimiter="\t", 
         header=None, 
         usecols=[0, 1, 2],
-        names=["seqname", "start", "end"]
+        names=["seqname", "start", "end"],
+        dtype={"seqname": str, "start": str, "end": str},
+        low_memory=False
     )
+    
+    # Convert start and end coordinates to integers
+    try:
+        bed_content["start"] = pd.to_numeric(bed_content["start"], errors="coerce")
+        bed_content["end"] = pd.to_numeric(bed_content["end"], errors="coerce")
+        
+        # Remove any rows with invalid coordinates
+        bed_content = bed_content.dropna(subset=["start", "end"])
+        bed_content["start"] = bed_content["start"].astype(int)
+        bed_content["end"] = bed_content["end"].astype(int)
+        
+    except Exception as e:
+        logger.error(f"Error converting coordinates to integers: {e}")
+        raise
+    
+    logger.info(f"Read {len(bed_content)} intervals from {file_path}")
     return bed_content
 
 
