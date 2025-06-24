@@ -32,7 +32,7 @@ kdpeak reads.bed --frip 0.3 --out peaks.bed
 ## Parameters
 
 ```bash
-usage: kdpeak [-h] [--out OUTPUT_FILE] [-l LEVEL] [--logfile LOGFILE] [--blacklisted-seqs chrN [chrN ...]] [--kde-bw FLOAT] [--min-peak-size INT] [--fraction-in-peaks FLOAT] [--span INT] READS.BED
+usage: kdpeak [-h] [--out OUTPUT_FILE] [--summits-out SUMMITS_FILE] [--density-out DENSITY_FILE] [--chrom-sizes CHROM_SIZES] [-l LEVEL] [--logfile LOGFILE] [--blacklisted-seqs chrN [chrN ...]] [--kde-bw FLOAT] [--min-peak-size INT] [--fraction-in-peaks FLOAT] [--span INT] READS.BED
 ```
 
 **Positional Argument:**
@@ -50,6 +50,14 @@ usage: kdpeak [-h] [--out OUTPUT_FILE] [-l LEVEL] [--logfile LOGFILE] [--blackli
   The file will have columns for start, end (start+1),
   peak name, and summit height (in cuts per 100 base pairs).
   If nothing is specified the summits will not be saved.
+- `--density-out density_file.bw` - Path to the output file where the event density will be saved.
+  The event density is the internally computed signal on which the peaks
+  are called based on a cutoff. It will be saved in the bigwig format for visualization
+  in genome browsers like IGV or JBrowse.
+- `--chrom-sizes chrom-sizes-file` - Chromosome sizes file with the two columns: seqname and size.
+  This file is only needed if --density-out is specified.
+  You can use a script like https://hgdownload.cse.ucsc.edu/admin/exe/linux.x86_64/fetchChromSizes
+  to fetch the file.
 - `-l LEVEL, --log LEVEL` - Set the logging level. Options include: DEBUG, INFO, WARNING, ERROR, CRITICAL. Default is INFO.
 - `--logfile LOGFILE` - Path to the file to write a detailed log.
 - `--blacklisted-seqs chrN [chrN ...]` - List of sequences (e.g., chromosomes) to exclude from peak calling. Input as space-separated values.
@@ -61,8 +69,22 @@ usage: kdpeak [-h] [--out OUTPUT_FILE] [-l LEVEL] [--logfile LOGFILE] [--blackli
 ## Utilizing All Available Options:
 
 ```bash
-kdpeak reads.bed --out peaks.bed --log DEBUG --logfile debug.log --blacklisted-seqs chr1 chr2 --kde-bw 500 --min-peak-size 50 --frip 0.5 --span 5
+kdpeak reads.bed --out peaks.bed --summits-out summits.bed --density-out density.bw --chrom-sizes hg38.chrom.sizes --log DEBUG --logfile debug.log --blacklisted-seqs chr1 chr2 --kde-bw 500 --min-peak-size 50 --frip 0.5 --span 5
 ```
+
+## BigWig Output for Visualization
+
+kdpeak can export the computed kernel density estimation as BigWig files for visualization in genome browsers:
+
+```bash
+# Basic usage with BigWig output
+kdpeak reads.bed --out peaks.bed --density-out density.bw --chrom-sizes hg38.chrom.sizes
+
+# Get chromosome sizes file (example for hg38)
+fetchChromSizes hg38 > hg38.chrom.sizes
+```
+
+The BigWig file contains the event density values (in cuts per 100 base pairs) that are used internally for peak calling. These files can be loaded into genome browsers like IGV or JBrowse to visualize the underlying signal alongside the called peaks.
 
 ## Disclaimer
 
