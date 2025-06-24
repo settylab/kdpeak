@@ -47,8 +47,15 @@ def read_bed(file_path: str) -> pd.DataFrame:
         A DataFrame containing the .bed file content.
     """
     header = {0: "seqname", 1: "start", 2: "end"}
-    bed_content = pd.read_csv(file_path, delimiter="\t", header=None).iloc[:, :3]
-    bed_content.rename(columns=header, inplace=True)
+    
+    # Read only the first 3 columns to handle variable column counts in BED files
+    bed_content = pd.read_csv(
+        file_path, 
+        delimiter="\t", 
+        header=None, 
+        usecols=[0, 1, 2],
+        names=["seqname", "start", "end"]
+    )
     return bed_content
 
 
