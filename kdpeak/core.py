@@ -163,6 +163,7 @@ def main():
         step=args.span,
         kde_bw=args.kde_bw,
         blacklisted=args.blacklisted_seqs,
+        chrom_sizes_file=args.chrom_sizes,
     )
 
     logger.info("Calling peaks.")

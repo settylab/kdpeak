@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 from KDEpy import FFTKDE
@@ -284,14 +284,117 @@ def get_kde(
     return grid, density
 
 
+def read_chrom_sizes_file(chrom_sizes_file: str) -> Dict[str, int]:
+    """
+    Read chromosome sizes from a file.
+    
+    Parameters
+    ----------
+    chrom_sizes_file : str
+        Path to chromosome sizes file with format: chromosome_name\tsize
+    
+    Returns
+    -------
+    dict
+        Dictionary mapping chromosome names to sizes.
+    """
+    chrom_sizes = {}
+    try:
+        with open(chrom_sizes_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        chrom_sizes[parts[0]] = int(parts[1])
+        logger.info(f"Read sizes for {len(chrom_sizes)} chromosomes from {chrom_sizes_file}")
+    except Exception as e:
+        logger.warning(f"Could not read chromosome sizes file {chrom_sizes_file}: {e}")
+    
+    return chrom_sizes
+
+
+def get_chromosome_size_estimate(events_df: pd.DataFrame) -> int:
+    """
+    Estimate chromosome size from the maximum coordinate in events.
+    
+    Parameters
+    ----------
+    events_df : pd.DataFrame
+        DataFrame containing genomic events with 'location' column.
+    
+    Returns
+    -------
+    int
+        Estimated chromosome size based on maximum coordinate.
+    """
+    if events_df.empty or 'location' not in events_df.columns:
+        return 0
+    return int(events_df['location'].max())
+
+
+def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame], 
+                           chrom_sizes_file: Optional[str] = None) -> List[str]:
+    """
+    Sort chromosomes by size (largest first) with robust fallback ordering.
+    
+    Parameters
+    ----------
+    ebs_c1 : dict
+        Dictionary mapping sequence names to events DataFrames.
+    chrom_sizes_file : str, optional
+        Path to chromosome sizes file. If provided, uses actual sizes.
+        If not provided, estimates sizes from data.
+    
+    Returns
+    -------
+    list
+        List of chromosome names sorted by size (largest first).
+    """
+    # Try to read actual chromosome sizes if file is provided
+    actual_chrom_sizes = {}
+    if chrom_sizes_file:
+        actual_chrom_sizes = read_chrom_sizes_file(chrom_sizes_file)
+    
+    # Calculate size estimates for each chromosome
+    chrom_sizes = []
+    for seqname in ebs_c1.keys():
+        if seqname in actual_chrom_sizes:
+            # Use actual chromosome size
+            size = actual_chrom_sizes[seqname]
+            logger.debug(f"Using actual size for {seqname}: {size:,}")
+        else:
+            # Fall back to estimation from data
+            size = get_chromosome_size_estimate(ebs_c1[seqname])
+            logger.debug(f"Estimated size for {seqname}: {size:,}")
+        
+        chrom_sizes.append((seqname, size))
+    
+    # Sort by size (descending), then by chromosome name for reproducibility
+    # This ensures consistent ordering even when chromosomes have the same size
+    sorted_chroms = sorted(chrom_sizes, key=lambda x: (-x[1], x[0]))
+    
+    # Log the sorting approach used
+    if actual_chrom_sizes:
+        found_actual = sum(1 for name, _ in sorted_chroms if name in actual_chrom_sizes)
+        logger.info(f"Sorted chromosomes using actual sizes for {found_actual}/{len(sorted_chroms)} chromosomes")
+    else:
+        logger.info("Sorted chromosomes using size estimates from data")
+    
+    # Extract just the chromosome names
+    return [chrom[0] for chrom in sorted_chroms]
+
+
 def make_kdes(
     ebs_c1,
     step=10,
     kde_bw=200,
     blacklisted=list(),
+    chrom_sizes_file=None,
 ):
     """
     Computes KDEs for given events, with optional blacklist.
+    Processes chromosomes in order of decreasing size for better user feedback.
 
     Parameters
     ----------
@@ -303,6 +406,8 @@ def make_kdes(
         Bandwidth for KDE estimation. Defaults to 200.
     blacklisted : list, optional
         List of sequences to exclude from KDE estimation.
+    chrom_sizes_file : str, optional
+        Path to chromosome sizes file. If provided, uses actual sizes for sorting.
 
     Returns
     -------
@@ -312,12 +417,27 @@ def make_kdes(
         List of signal densities for each sequence.
     """
 
-    sequences = set(ebs_c1.keys()) - set(blacklisted)
+    # Filter out blacklisted sequences
+    available_sequences = {k: v for k, v in ebs_c1.items() if k not in blacklisted}
+    
+    # Sort chromosomes by size (largest first)
+    sorted_sequences = sort_chromosomes_by_size(available_sequences, chrom_sizes_file)
+    
     result_dfs = list()
-    ntotal = len(sequences)
+    ntotal = len(sorted_sequences)
     signal_list_global = list()
+    
+    if ntotal == 0:
+        logger.warning("No sequences available for processing after filtering")
+        return pd.DataFrame(), []
+    
+    logger.info(f"Processing {ntotal} chromosomes in order of decreasing size")
+    
+    # Log the processing order for the first few chromosomes
+    preview_chroms = sorted_sequences[:min(5, ntotal)]
+    logger.info(f"Processing order (first {len(preview_chroms)}): {', '.join(preview_chroms)}")
 
-    for i, seqname in enumerate(sequences):
+    for i, seqname in enumerate(sorted_sequences):
         logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
 
         events = ebs_c1.get(seqname, pd.DataFrame())
