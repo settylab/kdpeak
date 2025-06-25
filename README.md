@@ -88,7 +88,7 @@ The BigWig file contains the event density values (in cuts per 100 base pairs) t
 
 ## BigWig Operations Tool (bwops)
 
-The `bwops` utility provides mathematical operations and regression analysis on BigWig files:
+The `bwops` utility provides mathematical operations and regression analysis on BigWig files with comprehensive chromosome filtering capabilities:
 
 ### Basic Operations
 
@@ -96,8 +96,15 @@ The `bwops` utility provides mathematical operations and regression analysis on 
 # Add multiple BigWig files
 bwops add file1.bw file2.bw file3.bw --out sum.bw --chrom-sizes hg38.chrom.sizes
 
-# Multiply BigWig files (convolution)
-bwops multiply signal1.bw signal2.bw --out product.bw --chrom-sizes hg38.chrom.sizes
+# Add files excluding contigs and mitochondrial DNA
+bwops add file1.bw file2.bw --out sum.bw \
+      --exclude-contigs --blacklisted-seqs chrM \
+      --chrom-sizes hg38.chrom.sizes
+
+# Multiply BigWig files (convolution) for human autosomes only
+bwops multiply signal1.bw signal2.bw --out product.bw \
+      --chromosome-pattern "chr[0-9]+$" \
+      --chrom-sizes hg38.chrom.sizes
 
 # Output to different formats
 bwops add file1.bw file2.bw --out results.csv --format csv
@@ -106,11 +113,18 @@ bwops add file1.bw file2.bw --out results.csv --format csv
 ### Regression Analysis
 
 ```bash
-# Linear regression with R-style formula
+# Linear regression with R-style formula (genome-wide analysis)
 bwops regress --formula "target.bw ~ predictor1.bw + predictor2.bw" \
               --out-prediction predictions.bw \
               --out-residuals residuals.bw \
               --out-stats stats.json \
+              --chrom-sizes hg38.chrom.sizes
+
+# Regression excluding problematic sequences
+bwops regress --formula "target.bw ~ predictor.bw" \
+              --exclude-contigs --blacklisted-seqs chrM chrY \
+              --chromosome-pattern "chr[0-9XY]+$" \
+              --out-prediction predictions.bw \
               --chrom-sizes hg38.chrom.sizes
 
 # Include interaction terms
@@ -122,14 +136,28 @@ bwops regress --formula "binary_target.bw ~ predictor.bw" --type logistic \
               --out-prediction logistic_pred.bw --chrom-sizes hg38.chrom.sizes
 ```
 
-### Options
+### Filtering Options
 
-- `--region chr:start-end`: Limit analysis to specific genomic region
-- `--chromosomes chr1 chr2`: Analyze only specified chromosomes  
-- `--span INT`: Resolution in base pairs (default: 10)
+All bwops operations support comprehensive chromosome filtering (consistent with kdpeak):
+
+- `--blacklisted-seqs`: Exclude specific chromosomes (e.g., `chrM chrY`)
+- `--exclude-contigs`: Automatically exclude contigs/scaffolds  
+- `--chromosome-pattern`: Include only chromosomes matching regex pattern
+- `--chromosomes`: Analyze only specified chromosomes
+- `--region`: Limit analysis to genomic region (chr:start-end)
+
+### Performance Features
+
+- **Native Resolution Detection**: Automatically detects BigWig file resolution to avoid slow interpolation
+- **Global Regression**: Analyzes all chromosomes simultaneously for genome-wide associations
+- **Memory Efficient**: Uses native intervals instead of creating dense coordinate grids
+
+### Additional Options
+
+- `--span INT`: Resolution in base pairs (default: auto-detect from BigWig files)
 - `--format`: Output format (bigwig, csv, tsv, bed, json)
 
-The regression analysis prints summary statistics including R², p-values, and fitted coefficients to stdout, and can output predictions, residuals, and detailed statistics to separate files.
+The regression analysis operates across all chromosomes simultaneously and prints summary statistics including R², p-values, and fitted coefficients to stdout. It can output predictions, residuals, and detailed statistics to separate files.
 
 ## Disclaimer
 

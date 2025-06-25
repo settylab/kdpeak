@@ -34,6 +34,23 @@ dependencies = [
     "scipy>=1.7.0",
     "scikit-learn>=1.0.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "pytest-xdist>=2.0",
+    "psutil>=5.0",
+    "flake8>=3.8",
+    "black>=21.0",
+    "isort>=5.0",
+    "tox>=3.0",
+]
+test = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0", 
+    "psutil>=5.0",
+]
 keywords = ["genomics", "bioinformatics", "peak-calling", "kernel-density-estimation", "bigwig"]
 
 [project.urls]
@@ -55,3 +72,52 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 kdpeak = ["*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short", 
+    "--strict-markers",
+    "--strict-config",
+    "--color=yes"
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests", 
+    "cli: marks tests as command-line interface tests",
+    "performance: marks tests as performance tests",
+    "bigwig: marks tests that require BigWig files"
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning"
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["kdpeak"]

@@ -26,8 +26,19 @@ def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
     """
     level = getattr(logging, log_level)
     log_format = "[%(asctime)s] [%(levelname)-8s] %(message)s"
-    logging.basicConfig(level=level, filename=log_file, format=log_format, filemode="w", datefmt="%Y-%m-%d %H:%M:%S")
-    return logging.getLogger()
+    
+    # Clear existing handlers to allow reconfiguration
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Configure logging
+    logging.basicConfig(level=level, filename=log_file, format=log_format, filemode="w", datefmt="%Y-%m-%d %H:%M:%S", force=True)
+    
+    # Return the root logger with the correct level set
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    return logger
 
 
 logger = setup_logging()
@@ -165,7 +176,8 @@ def read_bed(file_path: str) -> pd.DataFrame:
         )
         
         if bed_content.empty:
-            raise ValueError(f"BED file {file_path} is empty or could not be read")
+            logger.warning(f"BED file {file_path} is empty")
+            return pd.DataFrame(columns=["seqname", "start", "end"])
         
         # Validate and clean the data
         bed_content = validate_bed_data(bed_content, file_path)
@@ -344,6 +356,10 @@ def full_kde_grid(x, xmin=None, xmax=None):
     grid : np.ndarray
         A grid of points for KDE estimation.
     """
+    if len(x) == 0:
+        # Handle empty input - return empty grid
+        return np.array([])
+    
     if xmin is None:
         xmin = np.min(x) - 1
     if xmax is None:
@@ -662,6 +678,10 @@ def make_kdes(
         low_res_cuts = np.round(cuts / step)
 
         grid = full_kde_grid(low_res_cuts)
+        if len(grid) == 0:
+            # Skip empty chromosomes
+            logger.warning(f"Skipping empty chromosome {seqname}")
+            continue
         cut_idx = (low_res_cuts - grid.min()).astype(int)
 
         _, density = get_kde(low_res_cuts, kde_bw=kde_bw / step, grid=grid)
@@ -732,6 +752,10 @@ def track_to_interval(job):
     peak_indices = loc_comb_data["peak"].values
     peak_location_df = loc_comb_data.loc[peak_indices].set_index("location")
 
+    # Handle case where no peaks are found
+    if peak_location_df.empty:
+        return pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
+
     summit_locations = peak_location_df.groupby("peak_name")["density"].idxmax()
     summit_heights = peak_location_df.loc[summit_locations, "density"]
 
@@ -778,6 +802,12 @@ def tracks_to_intervals(comb_data, step_size):
     with multiprocessing.Pool() as pool:
         for peaks in pool.imap(track_to_interval, jobs, 10):
             peaks_list.append(peaks)
+    if not peaks_list or all(df.empty for df in peaks_list):
+        # Handle case where no peaks are found in any chromosome
+        empty_peaks = pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
+        empty_peaks["length"] = pd.Series([], dtype=int)
+        return empty_peaks
+    
     peaks = pd.concat(peaks_list, axis=0)
     peaks["start"] = peaks["start"].clip(lower=0)
     peaks["length"] = peaks["end"] - peaks["start"]
@@ -840,6 +870,12 @@ def include_auc(df: pd.DataFrame) -> pd.DataFrame:
     df : pd.DataFrame
         DataFrame with 'auc' column added.
     """
+    if df.empty or 'mean' not in df.columns:
+        # Handle empty DataFrame or missing columns
+        if 'auc' not in df.columns:
+            df['auc'] = pd.Series([], dtype=float)
+        return df
+    
     df["auc"] = df["mean"] * df["length"]
     return df
 
@@ -858,6 +894,12 @@ def name_peaks(df: pd.DataFrame) -> pd.DataFrame:
     df : pd.DataFrame
         DataFrame with a 'name' column added, which contains unique names for each peak.
     """
+    if df.empty:
+        # Handle empty DataFrame
+        df = df.copy()
+        df['name'] = pd.Series([], dtype=str)
+        return df
+    
     name_dat = pd.DataFrame(
         map(lambda x: ("_".join(x[:-2]), x[-2], x[-1]), list(df.index.str.split("_"))),
         columns=["seqname", "interval", "is_peak"],

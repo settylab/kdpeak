@@ -22,7 +22,7 @@ import json
 from .util import setup_logging
 
 
-def parse_arguments():
+def parse_arguments(args=None):
     """Parse command line arguments for bwops."""
     parser = argparse.ArgumentParser(
         description="BigWig Operations Tool - perform mathematical operations and regression analysis on BigWig files"
@@ -61,14 +61,23 @@ def parse_arguments():
         subparser.add_argument('--chrom-sizes', help='Chromosome sizes file (required for BigWig output)')
         subparser.add_argument('--region', help='Limit analysis to genomic region (chr:start-end)')
         subparser.add_argument('--chromosomes', nargs='+', help='Limit analysis to specific chromosomes')
-        subparser.add_argument('--span', type=int, default=10, 
-                             help='Resolution for analysis in base pairs (default: 10)')
+        subparser.add_argument('--span', type=int, default=None, 
+                             help='Resolution for analysis in base pairs (default: auto-detect from BigWig files)')
+        
+        # Chromosome filtering parameters (similar to kdpeak)
+        subparser.add_argument('--blacklisted-seqs', nargs='+', default=[], 
+                             help='List of sequences to exclude from analysis')
+        subparser.add_argument('--exclude-contigs', action='store_true',
+                             help='Exclude contigs/scaffolds with common keywords')
+        subparser.add_argument('--chromosome-pattern', type=str,
+                             help='Regex pattern - only include chromosomes matching this pattern')
+        
         subparser.add_argument('-l', '--log', dest='logLevel',
                              choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                              default='INFO', help='Set logging level')
         subparser.add_argument('--logfile', help='Write log to file')
     
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 def read_chrom_sizes(sizes_file: str) -> Dict[str, int]:
@@ -91,8 +100,11 @@ def parse_region(region_str: str) -> Tuple[str, int, int]:
     return chrom, int(start), int(end)
 
 
-def get_common_chromosomes(bw_files: List[str]) -> List[str]:
-    """Find chromosomes common to all BigWig files."""
+def get_common_chromosomes(bw_files: List[str], blacklisted_seqs: List[str] = None, 
+                          exclude_contigs: bool = False, chromosome_pattern: str = None) -> List[str]:
+    """Find chromosomes common to all BigWig files with filtering options."""
+    from .util import filter_chromosomes
+    
     common_chroms = None
     
     for bw_file in bw_files:
@@ -103,39 +115,104 @@ def get_common_chromosomes(bw_files: List[str]) -> List[str]:
             else:
                 common_chroms = common_chroms.intersection(chroms)
     
-    return sorted(list(common_chroms))
-
-
-def get_common_span(bw_files: List[str], chromosomes: List[str]) -> int:
-    """Determine common span (GCD of all spans) across BigWig files."""
-    import math
+    if common_chroms is None:
+        return []
     
-    spans = []
+    # Convert to sorted list
+    common_chroms = sorted(list(common_chroms))
+    
+    # Apply filtering using the same logic as kdpeak
+    if blacklisted_seqs or exclude_contigs or chromosome_pattern:
+        # Filter out blacklisted sequences first
+        if blacklisted_seqs:
+            common_chroms = [chrom for chrom in common_chroms if chrom not in blacklisted_seqs]
+        
+        # Apply chromosome filtering
+        common_chroms = filter_chromosomes(
+            common_chroms, 
+            exclude_contigs, 
+            chromosome_pattern
+        )
+    
+    return common_chroms
+
+
+def get_native_resolution(bw_files: List[str], chromosomes: List[str]) -> Tuple[int, bool]:
+    """
+    Determine the native resolution of BigWig files to avoid interpolation.
+    Returns (resolution, needs_interpolation_warning)
+    """
+    import math
+    from collections import Counter
+    
+    logger = logging.getLogger()
+    
+    all_spans = []
+    file_resolutions = {}
+    
     for bw_file in bw_files:
         with pyBigWig.open(bw_file) as bw:
-            # Sample a few intervals to estimate span
-            for chrom in chromosomes[:3]:  # Check first few chromosomes
+            file_spans = []
+            # Sample intervals from multiple chromosomes to get better estimate
+            for chrom in chromosomes[:5]:  # Check first few chromosomes
                 if chrom in bw.chroms():
-                    intervals = bw.intervals(chrom, 0, min(10000, bw.chroms()[chrom]))
-                    if intervals:
-                        for start, end, _ in intervals[:10]:  # Check first 10 intervals
-                            spans.append(end - start)
+                    # Get intervals from different parts of the chromosome
+                    chrom_size = bw.chroms()[chrom]
+                    sample_regions = [
+                        (0, min(50000, chrom_size)),
+                        (chrom_size // 2, min(chrom_size // 2 + 50000, chrom_size)),
+                        (max(0, chrom_size - 50000), chrom_size)
+                    ]
+                    
+                    for start, end in sample_regions:
+                        intervals = bw.intervals(chrom, start, end)
+                        if intervals:
+                            for interval_start, interval_end, _ in intervals[:20]:
+                                span = interval_end - interval_start
+                                if span > 0:
+                                    file_spans.append(span)
+                            if len(file_spans) >= 50:  # Enough samples
+                                break
+                    if len(file_spans) >= 50:
                         break
+            
+            if file_spans:
+                # Use the most common span as the native resolution
+                span_counts = Counter(file_spans)
+                native_resolution = span_counts.most_common(1)[0][0]
+                file_resolutions[bw_file] = native_resolution
+                all_spans.extend(file_spans)
+                logger.debug(f"Native resolution for {os.path.basename(bw_file)}: {native_resolution} bp")
     
-    if not spans:
-        return 10  # Default span
+    if not all_spans:
+        logger.warning("Could not determine native resolution, using default 10 bp")
+        return 10, True
     
-    # Find GCD of all spans
-    result = spans[0]
-    for span in spans[1:]:
-        result = math.gcd(result, span)
+    # Find the GCD of all detected resolutions for compatibility
+    unique_resolutions = list(file_resolutions.values())
+    if len(set(unique_resolutions)) == 1:
+        # All files have the same resolution - perfect!
+        resolution = unique_resolutions[0]
+        needs_warning = False
+        logger.info(f"All files have matching native resolution: {resolution} bp")
+    else:
+        # Files have different resolutions - need to find common divisor
+        resolution = unique_resolutions[0]
+        for res in unique_resolutions[1:]:
+            resolution = math.gcd(resolution, res)
+        
+        needs_warning = resolution != max(unique_resolutions)
+        if needs_warning:
+            logger.warning(f"Files have different native resolutions: {unique_resolutions}")
+            logger.warning(f"Using GCD resolution {resolution} bp - this may require interpolation")
+            logger.warning("For best performance, use BigWig files with matching resolutions")
     
-    return max(result, 1)
+    return max(resolution, 1), needs_warning
 
 
 def read_bigwig_data(bw_files: List[str], chromosomes: List[str], 
                     span: int, region: Optional[Tuple[str, int, int]] = None) -> pd.DataFrame:
-    """Read and align data from multiple BigWig files."""
+    """Read and align data from multiple BigWig files efficiently at native resolution."""
     logger = logging.getLogger()
     
     all_data = []
@@ -144,8 +221,37 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
     if region:
         target_chroms = [region[0]] if region[0] in chromosomes else []
     
-    for chrom in target_chroms:
-        logger.info(f"Processing chromosome {chrom}")
+    # Check if we can use fast reading for all files (explicit detection)
+    can_use_fast_read = {}
+    for bw_file in bw_files:
+        with pyBigWig.open(bw_file) as bw:
+            # Sample a chromosome to check native resolution
+            test_chrom = target_chroms[0] if target_chroms else None
+            if test_chrom and test_chrom in bw.chroms():
+                sample_intervals = bw.intervals(test_chrom, 0, min(100000, bw.chroms()[test_chrom]))
+                if sample_intervals:
+                    native_spans = {end - start for start, end, _ in sample_intervals[:50]}
+                    # Check if target span is present in the file
+                    spans_match = span in native_spans
+                    can_use_fast_read[bw_file] = spans_match
+                    logger.info(f"File {os.path.basename(bw_file)}: found spans {sorted(native_spans)}, target={span}, can_use_fast={spans_match}")
+                else:
+                    can_use_fast_read[bw_file] = False
+                    logger.info(f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False")
+            else:
+                can_use_fast_read[bw_file] = False
+                logger.info(f"File {os.path.basename(bw_file)}: test_chrom={test_chrom} not available, can_use_fast=False")
+    
+    fast_files = [f for f, can_fast in can_use_fast_read.items() if can_fast]
+    slow_files = [f for f, can_fast in can_use_fast_read.items() if not can_fast]
+    
+    if fast_files:
+        logger.info(f"Using fast direct reading for {len(fast_files)} files: {[os.path.basename(f) for f in fast_files]}")
+    if slow_files:
+        logger.info(f"Using stats-based reading for {len(slow_files)} files: {[os.path.basename(f) for f in slow_files]}")
+    
+    for chrom_idx, chrom in enumerate(target_chroms):
+        logger.info(f"Processing chromosome {chrom} ({chrom_idx+1}/{len(target_chroms)})")
         
         # Determine chromosome bounds
         chrom_start = 0
@@ -164,33 +270,97 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
             logger.warning(f"Cannot determine size for chromosome {chrom}")
             continue
         
-        # Create coordinate grid
+        # Use efficient grid-based approach but with native span
         coords = np.arange(chrom_start, chrom_end, span)
+        if len(coords) == 0:
+            continue
         
-        # Read data from each BigWig file
-        chrom_data = {'chromosome': chrom, 'start': coords, 'end': coords + span}
+        # Warn if this will create a very large number of intervals AND we're using slow stats reading
+        slow_files_for_chrom = [f for f in bw_files if not can_use_fast_read.get(f, False)]
+        if len(coords) > 1_000_000 and slow_files_for_chrom:  # 1M intervals AND slow files
+            logger.warning(f"Chromosome {chrom} has {len(coords):,} intervals at {span}bp resolution")
+            logger.warning(f"Will be slow for {len(slow_files_for_chrom)} files using stats reading: {[os.path.basename(f) for f in slow_files_for_chrom]}")
+            logger.warning("Consider using --span with a larger value or --region to limit analysis")
+        elif len(coords) > 1_000_000:
+            logger.info(f"Chromosome {chrom} has {len(coords):,} intervals at {span}bp resolution (fast reading enabled)")
+            
+        # Create DataFrame for this chromosome
+        chrom_data = {
+            'chromosome': chrom,
+            'start': coords, 
+            'end': coords + span
+        }
         
+        # Read data from each BigWig file efficiently
         for i, bw_file in enumerate(bw_files):
             col_name = f"bw_{i}_{os.path.basename(bw_file).replace('.bw', '').replace('.bigwig', '')}"
             
             with pyBigWig.open(bw_file) as bw:
                 if chrom not in bw.chroms():
-                    logger.warning(f"Chromosome {chrom} not found in {bw_file}")
                     chrom_data[col_name] = np.zeros(len(coords))
                     continue
                 
-                # Get values for each coordinate
-                values = []
-                for coord in coords:
-                    end_coord = min(coord + span, bw.chroms()[chrom])
+                # Use fast or slow method based on pre-computed check
+                if can_use_fast_read.get(bw_file, False):
                     try:
-                        val = bw.stats(chrom, coord, end_coord, type="mean")[0]
-                        values.append(val if val is not None else 0.0)
-                    except:
-                        values.append(0.0)
+                        logger.info(f"Using fast interval read for {os.path.basename(bw_file)} on {chrom}")
+                        # Fast direct reading using intervals
+                        intervals = bw.intervals(chrom, chrom_start, chrom_end)
+                        if intervals:
+                            # Simple approach: create array and fill values directly
+                            values = np.zeros(len(coords))
+                            
+                            for start, end, value in intervals:
+                                # Find overlapping coordinates
+                                start_idx = max(0, (start - chrom_start) // span)
+                                end_idx = min(len(coords), (end - chrom_start) // span + 1)
+                                
+                                # Fill the overlapping range
+                                if start_idx < len(coords) and end_idx > 0:
+                                    actual_start = max(0, start_idx)
+                                    actual_end = min(len(coords), end_idx)
+                                    values[actual_start:actual_end] = value
+                            
+                            chrom_data[col_name] = values
+                            logger.info(f"Fast interval read completed for {os.path.basename(bw_file)}: {len(intervals)} intervals processed")
+                        else:
+                            logger.debug(f"No intervals found for {os.path.basename(bw_file)} on {chrom}")
+                            chrom_data[col_name] = np.zeros(len(coords))
+                        continue  # Skip stats method
+                    except Exception as e:
+                        logger.warning(f"Fast reading failed for {os.path.basename(bw_file)}: {e}, falling back to stats")
+                
+                # Stats method for averaging/interpolation
+                # Process in chunks with progress reporting
+                chunk_size = 50000  # Larger chunks for better performance
+                values = []
+                num_chunks = (len(coords) + chunk_size - 1) // chunk_size
+                
+                for chunk_idx in range(num_chunks):
+                    start_idx = chunk_idx * chunk_size
+                    end_idx = min(start_idx + chunk_size, len(coords))
+                    chunk_coords = coords[start_idx:end_idx]
+                    
+                    # Progress reporting for large chromosomes
+                    if len(coords) > 500000 and chunk_idx % 10 == 0:
+                        progress = (chunk_idx / num_chunks) * 100
+                        logger.info(f"  {os.path.basename(bw_file)}: {progress:.1f}% complete")
+                    
+                    # Process chunk
+                    chunk_values = []
+                    for coord in chunk_coords:
+                        end_coord = min(coord + span, bw.chroms()[chrom])
+                        try:
+                            val = bw.stats(chrom, coord, end_coord, type="mean")[0]
+                            chunk_values.append(val if val is not None else 0.0)
+                        except:
+                            chunk_values.append(0.0)
+                    
+                    values.extend(chunk_values)
                 
                 chrom_data[col_name] = values
         
+        # Convert to DataFrame and add to results
         if len(coords) > 0:
             all_data.append(pd.DataFrame(chrom_data))
     
@@ -264,11 +434,8 @@ def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 
                 X_cols.append(interaction_data)
                 X_names.append(interaction_name)
                 
-                # Also add individual terms if not already present
-                for i, factor_col in enumerate(factor_cols):
-                    if factor_col not in X_names:
-                        X_cols.append(data[factor_col])
-                        X_names.append(factors[i])
+                # Individual terms should be explicitly specified in the formula, not auto-added
+                # This prevents duplication when interaction terms are used
         else:
             # Simple term
             for col in file_columns:
@@ -306,10 +473,14 @@ def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 
         
         # Calculate p-values for coefficients (approximation)
         mse = np.sum(residuals**2) / (n - p - 1)
-        var_coef = mse * np.diag(np.linalg.inv(X.T @ X))
-        se_coef = np.sqrt(var_coef)
-        t_stats = model.coef_ / se_coef
-        p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), n - p - 1))
+        try:
+            var_coef = mse * np.diag(np.linalg.inv(X.T @ X))
+            se_coef = np.sqrt(var_coef)
+            t_stats = model.coef_ / se_coef
+            p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), n - p - 1))
+        except np.linalg.LinAlgError:
+            logger.warning("Singular matrix encountered - cannot compute p-values (likely due to multicollinearity)")
+            p_values = np.full(len(model.coef_), np.nan)
         
         results = {
             'model': model,
@@ -400,7 +571,8 @@ def main():
     
     if args.operation is None:
         print("Please specify an operation. Use --help for available operations.")
-        return
+        import sys
+        sys.exit(1)
     
     logger = setup_logging(args.logLevel, args.logfile)
     
@@ -432,28 +604,49 @@ def main():
                 input_files.append(clean_var)
         input_files = list(set(input_files))  # Remove duplicates
     
-    # Find common chromosomes
-    common_chroms = get_common_chromosomes(input_files)
-    if len(common_chroms) != sum(len(pyBigWig.open(f).chroms()) for f in input_files) / len(input_files):
-        logger.warning("Not all chromosomes are present in all input files")
+    # Find common chromosomes with filtering
+    common_chroms = get_common_chromosomes(
+        input_files, 
+        args.blacklisted_seqs, 
+        args.exclude_contigs, 
+        args.chromosome_pattern
+    )
     
-    # Filter chromosomes if specified
+    # Apply additional chromosome selection if specified
     if args.chromosomes:
         common_chroms = [c for c in common_chroms if c in args.chromosomes]
     
     if not common_chroms:
-        logger.error("No common chromosomes found")
+        logger.error("No common chromosomes found after filtering")
         return
     
-    logger.info(f"Processing {len(common_chroms)} chromosomes: {common_chroms}")
-    
-    # Determine span
-    if hasattr(args, 'span') and args.span:
-        span = args.span
+    # Less verbose chromosome listing - just count and first few
+    if len(common_chroms) <= 5:
+        logger.info(f"Processing {len(common_chroms)} chromosomes: {common_chroms}")
     else:
-        span = get_common_span(input_files, common_chroms)
+        logger.info(f"Processing {len(common_chroms)} chromosomes (showing first 5): {common_chroms[:5]}...")
     
-    logger.info(f"Using span: {span}")
+    # Determine span using native resolution to avoid interpolation
+    if hasattr(args, 'span') and args.span is not None:
+        span = args.span
+        logger.info(f"Using user-specified span: {span} bp")
+        if span < 1000:
+            logger.warning("Small span values may result in slow processing for large chromosomes")
+    else:
+        span, needs_warning = get_native_resolution(input_files, common_chroms)
+        if needs_warning:
+            logger.warning("Consider using BigWig files with matching resolutions for optimal performance")
+        else:
+            logger.info(f"Using native resolution: {span} bp (no interpolation needed)")
+        
+        # Suggest larger span for performance if native resolution is very small
+        if span < 50:
+            total_genome_size = sum(250_000_000 for _ in common_chroms)  # Rough estimate
+            estimated_intervals = total_genome_size // span
+            if estimated_intervals > 10_000_000:  # 10M intervals
+                logger.warning(f"Native resolution of {span}bp will create ~{estimated_intervals//1_000_000}M intervals")
+                logger.warning("For faster processing, consider using --span 1000 or larger")
+                logger.warning("This will require interpolation but may complete much faster")
     
     # Read data
     logger.info("Reading BigWig data...")

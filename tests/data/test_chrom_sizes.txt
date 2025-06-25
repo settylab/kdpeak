@@ -1,0 +1,5 @@
+chr1	200000
+chr2	150000
+chrX	100000
+chr1_random	5000
+chrUn_scaffold123	2000
