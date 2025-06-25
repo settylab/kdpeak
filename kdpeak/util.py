@@ -33,10 +33,112 @@ def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
 logger = setup_logging()
 
 
+def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame:
+    """
+    Validate BED file data and clean up common issues from parallel processing.
+    
+    Parameters
+    ----------
+    bed_content : pd.DataFrame
+        Raw BED data with columns: seqname, start, end
+    file_path : str
+        Path to the original file (for logging)
+        
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned and validated BED data
+    """
+    original_count = len(bed_content)
+    issues_found = []
+    
+    # Check for missing values
+    missing_mask = bed_content.isnull().any(axis=1)
+    if missing_mask.sum() > 0:
+        issues_found.append(f"{missing_mask.sum()} rows with missing values")
+        bed_content = bed_content[~missing_mask]
+    
+    # Check for non-numeric coordinates (could be from interleaved lines)
+    numeric_start = pd.to_numeric(bed_content["start"], errors="coerce")
+    numeric_end = pd.to_numeric(bed_content["end"], errors="coerce")
+    
+    invalid_coords = numeric_start.isnull() | numeric_end.isnull()
+    if invalid_coords.sum() > 0:
+        issues_found.append(f"{invalid_coords.sum()} rows with non-numeric coordinates")
+        # Log some examples of problematic lines
+        problematic_lines = bed_content[invalid_coords].head(5)
+        for idx, row in problematic_lines.iterrows():
+            logger.warning(f"Invalid coordinates at line {idx+1}: chr={row['seqname']}, start={row['start']}, end={row['end']}")
+        bed_content = bed_content[~invalid_coords]
+        numeric_start = numeric_start[~invalid_coords]
+        numeric_end = numeric_end[~invalid_coords]
+    
+    # Convert to integers
+    bed_content = bed_content.copy()
+    bed_content["start"] = numeric_start.astype(int)
+    bed_content["end"] = numeric_end.astype(int)
+    
+    # Check for negative coordinates
+    negative_coords = (bed_content["start"] < 0) | (bed_content["end"] < 0)
+    if negative_coords.sum() > 0:
+        issues_found.append(f"{negative_coords.sum()} rows with negative coordinates")
+        bed_content = bed_content[~negative_coords]
+    
+    # Check for invalid intervals (start >= end)
+    invalid_intervals = bed_content["start"] >= bed_content["end"]
+    if invalid_intervals.sum() > 0:
+        issues_found.append(f"{invalid_intervals.sum()} rows where start >= end")
+        bed_content = bed_content[~invalid_intervals]
+    
+    # Check for extremely large coordinates (potential corruption)
+    max_reasonable_coord = 300_000_000  # Larger than human genome
+    huge_coords = (bed_content["start"] > max_reasonable_coord) | (bed_content["end"] > max_reasonable_coord)
+    if huge_coords.sum() > 0:
+        issues_found.append(f"{huge_coords.sum()} rows with unreasonably large coordinates")
+        bed_content = bed_content[~huge_coords]
+    
+    # Check for empty chromosome names
+    empty_chroms = bed_content["seqname"].str.strip() == ""
+    if empty_chroms.sum() > 0:
+        issues_found.append(f"{empty_chroms.sum()} rows with empty chromosome names")
+        bed_content = bed_content[~empty_chroms]
+    
+    # Check for suspicious chromosome names (likely from interleaved lines)
+    suspicious_chroms = bed_content["seqname"].str.len() > 30  # Very long names
+    suspicious_chroms |= bed_content["seqname"].str.contains(r'chr.*chr', regex=True, na=False)  # Double chr
+    suspicious_chroms |= bed_content["seqname"].str.contains(r'[ATCG]{4,}', regex=True, na=False)  # DNA sequences
+    suspicious_chroms |= bed_content["seqname"].str.contains(r'_.*_.*_', regex=True, na=False)  # Multiple underscores (cell barcodes)
+    if suspicious_chroms.sum() > 0:
+        issues_found.append(f"{suspicious_chroms.sum()} rows with suspicious chromosome names")
+        # Log some examples
+        suspicious_examples = bed_content[suspicious_chroms]["seqname"].head(5).tolist()
+        logger.warning(f"Examples of suspicious chromosome names: {suspicious_examples}")
+        bed_content = bed_content[~suspicious_chroms]
+    
+    final_count = len(bed_content)
+    removed_count = original_count - final_count
+    
+    if issues_found:
+        logger.warning(f"Data validation issues found in {file_path}:")
+        for issue in issues_found:
+            logger.warning(f"  - {issue}")
+        logger.warning(f"Removed {removed_count} problematic rows ({removed_count/original_count:.1%})")
+        
+        if removed_count / original_count > 0.1:  # More than 10% removed
+            logger.error(f"High proportion of invalid data ({removed_count/original_count:.1%}) suggests file corruption")
+            logger.error("This may be caused by interleaved writes from parallel processes")
+    
+    if final_count == 0:
+        raise ValueError(f"No valid intervals remain after data validation in {file_path}")
+    
+    return bed_content
+
+
 def read_bed(file_path: str) -> pd.DataFrame:
     """
     Reads a .bed file and returns it as a pandas DataFrame.
     Only reads the first 3 columns (chromosome, start, end) as required for peak calling.
+    Includes robust validation to handle corrupted files from parallel processing.
 
     Parameters
     ----------
@@ -48,34 +150,32 @@ def read_bed(file_path: str) -> pd.DataFrame:
     bed_content : pd.DataFrame
         A DataFrame containing the .bed file content with columns: seqname, start, end.
     """
-    # Read only the first 3 columns to handle variable column counts in BED files
-    # Use string dtype initially to handle any mixed types, then convert
-    bed_content = pd.read_csv(
-        file_path, 
-        delimiter="\t", 
-        header=None, 
-        usecols=[0, 1, 2],
-        names=["seqname", "start", "end"],
-        dtype={"seqname": str, "start": str, "end": str},
-        low_memory=False
-    )
-    
-    # Convert start and end coordinates to integers
     try:
-        bed_content["start"] = pd.to_numeric(bed_content["start"], errors="coerce")
-        bed_content["end"] = pd.to_numeric(bed_content["end"], errors="coerce")
+        # Read only the first 3 columns to handle variable column counts in BED files
+        # Use string dtype initially to handle any mixed types
+        bed_content = pd.read_csv(
+            file_path, 
+            delimiter="\t", 
+            header=None, 
+            usecols=[0, 1, 2],
+            names=["seqname", "start", "end"],
+            dtype={"seqname": str, "start": str, "end": str},
+            low_memory=False,
+            on_bad_lines='skip'  # Skip malformed lines
+        )
         
-        # Remove any rows with invalid coordinates
-        bed_content = bed_content.dropna(subset=["start", "end"])
-        bed_content["start"] = bed_content["start"].astype(int)
-        bed_content["end"] = bed_content["end"].astype(int)
+        if bed_content.empty:
+            raise ValueError(f"BED file {file_path} is empty or could not be read")
+        
+        # Validate and clean the data
+        bed_content = validate_bed_data(bed_content, file_path)
+        
+        logger.info(f"Read {len(bed_content)} valid intervals from {file_path}")
+        return bed_content
         
     except Exception as e:
-        logger.error(f"Error converting coordinates to integers: {e}")
+        logger.error(f"Error reading BED file {file_path}: {e}")
         raise
-    
-    logger.info(f"Read {len(bed_content)} intervals from {file_path}")
-    return bed_content
 
 
 def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
@@ -129,13 +229,16 @@ def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: 
         logger.error(f"Error reading sizes_file: {e}")
         raise
 
-    # Ensure all sequences in comb_data are in the chromosome sizes file
+    # Check which sequences are missing from chromosome sizes file
     all_seqs = comb_data["seqname"].unique()
     missing_seqs = [seq for seq in all_seqs if seq not in chrom_sizes]
     if missing_seqs:
-        error_message = f"Sequences {missing_seqs} are missing in the chromosome sizes file."
-        logger.error(error_message)
-        raise ValueError(error_message)
+        logger.warning(f"Sequences {missing_seqs} are missing in the chromosome sizes file and will be skipped")
+        logger.warning("This may indicate corrupted chromosome names from parallel processing")
+        # Filter out missing sequences instead of failing
+        comb_data = comb_data[comb_data["seqname"].isin(chrom_sizes.keys())]
+        if comb_data.empty:
+            raise ValueError("No valid sequences remain after filtering missing chromosomes")
 
     with pyBigWig.open(out_path, "w") as bw:
         bw.addHeader(list(sorted(chrom_sizes.items())))
@@ -253,7 +356,7 @@ def get_kde(
     cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None
 ):
     """
-    Estimates the KDE of the given data points.
+    Estimates the KDE of the given data points with memory protection.
 
     Parameters
     ----------
@@ -277,12 +380,27 @@ def get_kde(
     density : np.ndarray
         Estimated densities at each point in the grid.
     """
+    if len(cut_locations) == 0:
+        logger.warning("No cut locations provided for KDE")
+        return np.array([]), np.array([])
+    
     if grid is None:
         grid = full_kde_grid(cut_locations, xmin, xmax)
-    kernel = FFTKDE(kernel=kernel, bw=kde_bw)
-    kernel = kernel.fit(cut_locations)
-    density = kernel.evaluate(grid)
-    return grid, density
+    
+    # Check for memory issues with very large grids
+    if len(grid) > 10_000_000:  # 10M points
+        logger.warning(f"Very large KDE grid ({len(grid)} points) may cause memory issues")
+        logger.warning("Consider increasing --span parameter to reduce resolution")
+    
+    try:
+        kernel = FFTKDE(kernel=kernel, bw=kde_bw)
+        kernel = kernel.fit(cut_locations)
+        density = kernel.evaluate(grid)
+        return grid, density
+    except Exception as e:
+        logger.error(f"KDE computation failed: {e}")
+        logger.error(f"Grid size: {len(grid)}, Cut locations: {len(cut_locations)}")
+        raise
 
 
 def read_chrom_sizes_file(chrom_sizes_file: str) -> Dict[str, int]:

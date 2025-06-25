@@ -153,7 +153,7 @@ def parse_arguments():
         "--chromosome-pattern",
         metavar="regex",
         type=str,
-        help="Include only chromosomes matching this regex pattern (e.g., 'chr[1-9XY]+' for human main chromosomes).",
+        help="Include only chromosomes matching this regex pattern (e.g., '^chr[1-9XY]$|^chr[12][0-9]$|^chr2[0-2]$' for human main chromosomes).",
     )
 
     return parser.parse_args()
