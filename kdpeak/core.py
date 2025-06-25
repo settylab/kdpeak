@@ -298,7 +298,8 @@ def main():
 
         # Write output files
         def write_main_output():
-            return write_bed(bed[["seqname", "start", "end", "name", "auc"]], args.out)
+            write_bed(bed[["seqname", "start", "end", "name", "auc"]], args.out)
+            return True  # Return success indicator
         
         logger.info("Writing results to %s...", args.out)
         if safe_file_operation(
@@ -318,7 +319,8 @@ def main():
                 bed_summits = bed.copy()
                 bed_summits["start"] = bed_summits["summit"]
                 bed_summits["end"] = bed_summits["summit"] + 1
-                return write_bed(bed_summits[["seqname", "start", "end", "name", "summit_height"]], args.summits_out)
+                write_bed(bed_summits[["seqname", "start", "end", "name", "summit_height"]], args.summits_out)
+                return True  # Return success indicator
             
             logger.info("Writing summits to %s...", args.summits_out)
             if safe_file_operation(
@@ -341,7 +343,8 @@ def main():
                 return 1
             
             def write_density():
-                return write_bigwig(comb_data, args.density_out, sizes_file=args.chrom_sizes, span=args.span)
+                write_bigwig(comb_data, args.density_out, sizes_file=args.chrom_sizes, span=args.span)
+                return True  # Return success indicator
             
             logger.info("Writing density to %s...", args.density_out)
             if safe_file_operation(
