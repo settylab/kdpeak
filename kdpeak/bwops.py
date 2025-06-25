@@ -48,8 +48,12 @@ def parse_arguments(args=None):
     
     # Regression operation
     regress_parser = subparsers.add_parser('regress', help='Perform regression analysis')
-    regress_parser.add_argument('--formula', required=True, 
-                               help='R-style formula, e.g., "target.bw ~ predictor1.bw + predictor2.bw"')
+    regress_parser.add_argument('--formula', 
+                               help='Formula using variable names, e.g., "target ~ pred1 + pred2 + pred1*pred2" (default: auto-generate)')
+    regress_parser.add_argument('--target', required=True,
+                               help='Target variable file and optional name, e.g., "target=file.bw" or just "file.bw" (uses "target")')
+    regress_parser.add_argument('--predictors', nargs='+', required=True,
+                               help='Predictor variables as name=file pairs, e.g., "pred1=file1.bw pred2=file2.bw" or just files (uses a,b,c...)')
     regress_parser.add_argument('--type', choices=['linear', 'logistic'], default='linear',
                                help='Regression type (default: linear)')
     regress_parser.add_argument('--out-prediction', help='Output file for predictions')
@@ -396,6 +400,55 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
     return pd.concat(all_data, ignore_index=True)
 
 
+def parse_variable_mapping(target_arg: str, predictors_args: List[str]) -> Tuple[Dict[str, str], str, List[str]]:
+    """
+    Parse target and predictor arguments to create variable name to file mapping.
+    
+    Returns:
+        mapping: Dict of variable_name -> file_path
+        target_var: Target variable name
+        predictor_vars: List of predictor variable names
+    """
+    mapping = {}
+    
+    # Parse target
+    if '=' in target_arg:
+        target_var, target_file = target_arg.split('=', 1)
+        target_var = target_var.strip()
+        target_file = target_file.strip()
+    else:
+        target_var = "target"
+        target_file = target_arg.strip()
+    
+    mapping[target_var] = target_file
+    
+    # Parse predictors
+    predictor_vars = []
+    default_names = [chr(ord('a') + i) for i in range(26)]  # a, b, c, ..., z
+    default_idx = 0
+    
+    for pred_arg in predictors_args:
+        if '=' in pred_arg:
+            pred_var, pred_file = pred_arg.split('=', 1)
+            pred_var = pred_var.strip()
+            pred_file = pred_file.strip()
+        else:
+            pred_var = default_names[default_idx] if default_idx < len(default_names) else f"pred{default_idx}"
+            pred_file = pred_arg.strip()
+            default_idx += 1
+        
+        mapping[pred_var] = pred_file
+        predictor_vars.append(pred_var)
+    
+    return mapping, target_var, predictor_vars
+
+
+def generate_default_formula(target_var: str, predictor_vars: List[str]) -> str:
+    """Generate default formula with all monomial terms."""
+    predictors_str = " + ".join(predictor_vars)
+    return f"{target_var} ~ {predictors_str}"
+
+
 def parse_formula(formula: str) -> Tuple[str, List[str]]:
     """Parse R-style formula and return target and predictor variables."""
     if '~' not in formula:
@@ -415,24 +468,49 @@ def parse_formula(formula: str) -> Tuple[str, List[str]]:
     return target, predictor_terms
 
 
-def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 'linear') -> Dict:
-    """Perform regression analysis on the data."""
+def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 'linear', 
+                      var_mapping: Dict[str, str] = None) -> Dict:
+    """Perform regression analysis on the data using variable mapping."""
     logger = logging.getLogger()
     
     target_var, predictor_terms = parse_formula(formula)
     
-    # Map formula variables to actual column names
+    # Get BigWig columns from data
     file_columns = [col for col in data.columns if col.startswith('bw_')]
     
-    # Find target column
-    target_col = None
-    for col in file_columns:
-        if target_var.replace('.bw', '').replace('.bigwig', '') in col:
-            target_col = col
-            break
+    # Create mapping from variable names to actual data columns
+    if var_mapping is None:
+        # Fallback to old logic if no variable mapping provided
+        logger.warning("No variable mapping provided, using filename-based matching")
+        var_to_col = {}
+        for var_name in [target_var] + predictor_terms:
+            # Extract base variable name (remove interaction symbols)
+            base_var = re.sub(r'[*:].*', '', var_name.strip())
+            var_basename = os.path.basename(base_var).replace('.bw', '').replace('.bigwig', '')
+            
+            for col in file_columns:
+                if var_basename in col:
+                    var_to_col[base_var] = col
+                    break
+    else:
+        # Use provided variable mapping to find columns
+        var_to_col = {}
+        for var_name, file_path in var_mapping.items():
+            file_basename = os.path.basename(file_path).replace('.bw', '').replace('.bigwig', '')
+            
+            # Find the column that corresponds to this file
+            for col in file_columns:
+                if file_basename in col:
+                    var_to_col[var_name] = col
+                    break
+            
+            if var_name not in var_to_col:
+                raise ValueError(f"Could not find data column for variable '{var_name}' (file: {file_path})")
     
-    if target_col is None:
-        raise ValueError(f"Target variable '{target_var}' not found in data")
+    # Find target column
+    if target_var not in var_to_col:
+        raise ValueError(f"Target variable '{target_var}' not found in variable mapping")
+    target_col = var_to_col[target_var]
     
     # Build design matrix
     X_cols = []
@@ -443,32 +521,30 @@ def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 
             # Interaction term
             factors = [f.strip() for f in term.split('*')]
             factor_cols = []
-            for factor in factors:
-                for col in file_columns:
-                    if factor.replace('.bw', '').replace('.bigwig', '') in col:
-                        factor_cols.append(col)
-                        break
             
-            if len(factor_cols) == len(factors):
-                # Create interaction column
-                interaction_data = data[factor_cols[0]].copy()
-                interaction_name = factors[0]
-                for i in range(1, len(factor_cols)):
-                    interaction_data *= data[factor_cols[i]]
-                    interaction_name += f"*{factors[i]}"
+            for factor in factors:
+                if factor not in var_to_col:
+                    raise ValueError(f"Predictor variable '{factor}' not found in variable mapping")
+                factor_cols.append(var_to_col[factor])
+            
+            # Create interaction column
+            interaction_data = data[factor_cols[0]].copy()
+            interaction_name = factors[0]
+            for i in range(1, len(factor_cols)):
+                interaction_data *= data[factor_cols[i]]
+                interaction_name += f"*{factors[i]}"
+            
+            X_cols.append(interaction_data)
+            X_names.append(interaction_name)
                 
-                X_cols.append(interaction_data)
-                X_names.append(interaction_name)
-                
-                # Individual terms should be explicitly specified in the formula, not auto-added
-                # This prevents duplication when interaction terms are used
         else:
             # Simple term
-            for col in file_columns:
-                if term.strip().replace('.bw', '').replace('.bigwig', '') in col:
-                    X_cols.append(data[col])
-                    X_names.append(term.strip())
-                    break
+            term_clean = term.strip()
+            if term_clean not in var_to_col:
+                raise ValueError(f"Predictor variable '{term_clean}' not found in variable mapping")
+            
+            X_cols.append(data[var_to_col[term_clean]])
+            X_names.append(term_clean)
     
     if not X_cols:
         raise ValueError("No predictor variables found in data")
@@ -484,6 +560,11 @@ def perform_regression(data: pd.DataFrame, formula: str, regression_type: str = 
     
     if len(X) == 0:
         raise ValueError("No valid data points after removing NaN values")
+    
+    logger.info(f"Regression analysis: {len(y)} observations, {X.shape[1]} predictors")
+    logger.debug(f"Target: {target_var} -> {target_col}")
+    for i, name in enumerate(X_names):
+        logger.debug(f"Predictor {i+1}: {name}")
     
     # Perform regression
     if regression_type == 'linear':
@@ -871,11 +952,15 @@ def main():
 
         # Validate input files early
         input_files = getattr(args, 'input_files', [])
-        if hasattr(args, 'formula') and args.formula:
-            # For regression, extract files from formula
-            import re
-            formula_files = re.findall(r'[\w\./]+\.bw(?:ig)?', args.formula)
-            input_files.extend(formula_files)
+        if args.operation == 'regress':
+            # For regression, get files from target and predictors arguments
+            if hasattr(args, 'target') and args.target:
+                target_file = args.target.split('=')[-1].strip()  # Get file part
+                input_files.append(target_file)
+            if hasattr(args, 'predictors') and args.predictors:
+                for pred in args.predictors:
+                    pred_file = pred.split('=')[-1].strip()  # Get file part
+                    input_files.append(pred_file)
         
         for input_file in input_files:
             try:
@@ -943,15 +1028,16 @@ def main():
         if args.operation in ['add', 'multiply', 'correlate']:
             input_files = args.input_files
         elif args.operation == 'regress':
-            # Extract file names from formula
-            target_var, predictor_terms = parse_formula(args.formula)
-            input_files = []
-            for var in [target_var] + predictor_terms:
-                # Extract filename from variable (remove interaction symbols)
-                clean_var = re.sub(r'[*:].*', '', var.strip())
-                if clean_var.endswith('.bw') or clean_var.endswith('.bigwig'):
-                    input_files.append(clean_var)
-            input_files = list(set(input_files))  # Remove duplicates
+            # Parse variable mappings from target and predictors arguments
+            var_mapping, target_var, predictor_vars = parse_variable_mapping(args.target, args.predictors)
+            
+            # Generate default formula if not provided
+            if not args.formula:
+                args.formula = generate_default_formula(target_var, predictor_vars)
+                logger.info(f"Using auto-generated formula: {args.formula}")
+            
+            # Extract all input files from variable mapping
+            input_files = list(var_mapping.values())
         
         # Find common chromosomes with filtering
         common_chroms = get_common_chromosomes(
@@ -1022,7 +1108,7 @@ def main():
             
         elif args.operation == 'regress':
             logger.info("Performing regression analysis...")
-            results = perform_regression(data, args.formula, args.type)
+            results = perform_regression(data, args.formula, args.type, var_mapping)
             
             # Print summary statistics
             print("\n" + "="*50)

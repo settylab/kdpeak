@@ -112,29 +112,65 @@ bwops add file1.bw file2.bw --out results.csv --format csv
 
 ### Regression Analysis
 
+The `bwops regress` command provides flexible regression analysis with support for complex file paths and easy-to-read formulas:
+
 ```bash
-# Linear regression with R-style formula (genome-wide analysis)
-bwops regress --formula "target.bw ~ predictor1.bw + predictor2.bw" \
+# Simple regression with auto-generated formula (target ~ a + b)
+bwops regress --target "signal.bw" \
+              --predictors "control.bw" "treatment.bw" \
+              --out-prediction predictions.bw \
+              --chrom-sizes hg38.chrom.sizes
+
+# Named variables with custom formula for clarity
+bwops regress --target "response=ChIP_signal.bw" \
+              --predictors "input=input_control.bw" "dnase=DNase_signal.bw" \
+              --formula "response ~ input + dnase + input*dnase" \
               --out-prediction predictions.bw \
               --out-residuals residuals.bw \
               --out-stats stats.json \
               --chrom-sizes hg38.chrom.sizes
 
+# Complex file paths with spaces (no parsing issues)
+bwops regress --target "signal=/path/with spaces/signal file.bw" \
+              --predictors "ctrl=/data/control samples/ctrl.bw" \
+              --formula "signal ~ ctrl" \
+              --format csv --out results.csv
+
 # Regression excluding problematic sequences
-bwops regress --formula "target.bw ~ predictor.bw" \
+bwops regress --target "target.bw" --predictors "predictor.bw" \
               --exclude-contigs --blacklisted-seqs chrM chrY \
               --chromosome-pattern "chr[0-9XY]+$" \
               --out-prediction predictions.bw \
               --chrom-sizes hg38.chrom.sizes
 
-# Include interaction terms
-bwops regress --formula "target.bw ~ predictor1.bw + predictor2.bw + predictor1.bw*predictor2.bw" \
-              --out-prediction predictions.csv --format csv
-
-# Logistic regression
-bwops regress --formula "binary_target.bw ~ predictor.bw" --type logistic \
-              --out-prediction logistic_pred.bw --chrom-sizes hg38.chrom.sizes
+# Logistic regression with mixed naming
+bwops regress --target "binary_target.bw" \
+              --predictors "pred1=predictor1.bw" "predictor2.bw" \
+              --formula "target ~ pred1 + a"  # a = predictor2.bw \
+              --type logistic \
+              --out-prediction logistic_pred.bw \
+              --chrom-sizes hg38.chrom.sizes
 ```
+
+#### Variable Naming System
+
+- **Explicit naming**: `"varname=file.bw"` creates variable `varname` for `file.bw`
+- **Default naming**: Just `"file.bw"` uses `target` for target, `a`, `b`, `c`... for predictors
+- **Auto-generated formulas**: If no `--formula` provided, generates `target ~ a + b + c`
+- **Clean formulas**: Use variable names instead of file paths for readability
+
+#### Required Arguments
+
+- `--target`: Target variable file with optional name (`target=file.bw` or `file.bw`)
+- `--predictors`: One or more predictor files with optional names (`pred1=file1.bw pred2=file2.bw`)
+
+#### Optional Arguments
+
+- `--formula`: R-style formula using variable names (auto-generated if omitted)
+- `--type`: Regression type (`linear` or `logistic`, default: `linear`)
+- `--out-prediction`: Output file for predictions
+- `--out-residuals`: Output file for residuals  
+- `--out-stats`: Output file for detailed statistics (JSON format)
 
 ### Filtering Options
 

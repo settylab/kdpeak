@@ -11,7 +11,8 @@ from pathlib import Path
 
 from kdpeak.bwops import (
     parse_formula, perform_regression, read_chrom_sizes,
-    get_common_chromosomes, write_output, parse_arguments
+    get_common_chromosomes, write_output, parse_arguments,
+    parse_variable_mapping, generate_default_formula
 )
 from kdpeak.util import filter_chromosomes
 
@@ -51,6 +52,74 @@ class TestFormulaHandling:
         assert predictors == ["predictor1.bw", "predictor2.bw"]
 
 
+class TestVariableMapping:
+    """Test new variable mapping functionality for regression."""
+    
+    def test_parse_variable_mapping_with_names(self):
+        """Test parsing target and predictors with explicit variable names."""
+        target = "response=response.bw"
+        predictors = ["ctrl=control.bw", "treat=treatment.bw"]
+        
+        mapping, target_var, predictor_vars = parse_variable_mapping(target, predictors)
+        
+        assert mapping == {
+            "response": "response.bw",
+            "ctrl": "control.bw",
+            "treat": "treatment.bw"
+        }
+        assert target_var == "response"
+        assert predictor_vars == ["ctrl", "treat"]
+    
+    def test_parse_variable_mapping_default_names(self):
+        """Test parsing with default variable names."""
+        target = "signal.bw"
+        predictors = ["file1.bw", "file2.bw", "file3.bw"]
+        
+        mapping, target_var, predictor_vars = parse_variable_mapping(target, predictors)
+        
+        assert mapping == {
+            "target": "signal.bw",
+            "a": "file1.bw",
+            "b": "file2.bw",
+            "c": "file3.bw"
+        }
+        assert target_var == "target"
+        assert predictor_vars == ["a", "b", "c"]
+    
+    def test_parse_variable_mapping_mixed_names(self):
+        """Test parsing with mix of explicit and default names."""
+        target = "response=response.bw"
+        predictors = ["ctrl=control.bw", "treatment.bw"]
+        
+        mapping, target_var, predictor_vars = parse_variable_mapping(target, predictors)
+        
+        assert mapping == {
+            "response": "response.bw",
+            "ctrl": "control.bw",
+            "a": "treatment.bw"
+        }
+        assert target_var == "response"
+        assert predictor_vars == ["ctrl", "a"]
+    
+    def test_generate_default_formula(self):
+        """Test auto-generation of regression formula."""
+        target_var = "signal"
+        predictor_vars = ["ctrl", "treat", "background"]
+        
+        formula = generate_default_formula(target_var, predictor_vars)
+        
+        assert formula == "signal ~ ctrl + treat + background"
+    
+    def test_generate_default_formula_single_predictor(self):
+        """Test formula generation with single predictor."""
+        target_var = "response"
+        predictor_vars = ["predictor"]
+        
+        formula = generate_default_formula(target_var, predictor_vars)
+        
+        assert formula == "response ~ predictor"
+
+
 class TestRegressionAnalysis:
     """Test regression functionality."""
     
@@ -81,9 +150,14 @@ class TestRegressionAnalysis:
     
     def test_linear_regression_simple(self, regression_data):
         """Test simple linear regression."""
-        formula = "target.bw ~ predictor1.bw + predictor2.bw"
+        formula = "target ~ predictor1 + predictor2"
+        var_mapping = {
+            "target": "target.bw",
+            "predictor1": "predictor1.bw", 
+            "predictor2": "predictor2.bw"
+        }
         
-        results = perform_regression(regression_data, formula, 'linear')
+        results = perform_regression(regression_data, formula, 'linear', var_mapping)
         
         assert 'coefficients' in results
         assert 'intercept' in results
@@ -101,11 +175,40 @@ class TestRegressionAnalysis:
         # R² should be high for this synthetic data
         assert results['r2'] > 0.8
     
+    def test_linear_regression_with_variable_mapping(self, regression_data):
+        """Test regression with explicit variable mapping."""
+        formula = "response ~ ctrl + treat"
+        var_mapping = {
+            "response": "target.bw",
+            "ctrl": "predictor1.bw",
+            "treat": "predictor2.bw"
+        }
+        
+        results = perform_regression(regression_data, formula, 'linear', var_mapping)
+        
+        # Should work the same as the simple test but with different variable names
+        assert len(results['coefficients']) == 2
+        assert len(results['variable_names']) == 2
+        assert results['variable_names'] == ['ctrl', 'treat']
+        
+        # Coefficients should be the same
+        coeffs = results['coefficients']
+        assert abs(coeffs[0] - 2.0) < 0.1  # Should be close to 2
+        assert abs(coeffs[1] - 1.5) < 0.1  # Should be close to 1.5
+        
+        # R² should be high for this synthetic data
+        assert results['r2'] > 0.8
+    
     def test_linear_regression_interaction(self, regression_data):
         """Test linear regression with interaction terms."""
-        formula = "target.bw ~ predictor1.bw + predictor2.bw + predictor1.bw*predictor2.bw"
+        formula = "target ~ predictor1 + predictor2 + predictor1*predictor2"
+        var_mapping = {
+            "target": "target.bw",
+            "predictor1": "predictor1.bw",
+            "predictor2": "predictor2.bw"
+        }
         
-        results = perform_regression(regression_data, formula, 'linear')
+        results = perform_regression(regression_data, formula, 'linear', var_mapping)
         
         # Should have 3 coefficients: x1, x2, and x1*x2
         assert len(results['coefficients']) == 3
@@ -136,8 +239,13 @@ class TestRegressionAnalysis:
             'bw_2_target': y
         })
         
-        formula = "target.bw ~ predictor1.bw + predictor2.bw"
-        results = perform_regression(data, formula, 'logistic')
+        formula = "target ~ predictor1 + predictor2"
+        var_mapping = {
+            "target": "target.bw",
+            "predictor1": "predictor1.bw",
+            "predictor2": "predictor2.bw"
+        }
+        results = perform_regression(data, formula, 'logistic', var_mapping)
         
         assert 'coefficients' in results
         assert 'predictions' in results
@@ -149,8 +257,13 @@ class TestRegressionAnalysis:
         regression_data.loc[0:10, 'bw_0_predictor1'] = np.nan
         regression_data.loc[20:25, 'bw_2_target'] = np.nan
         
-        formula = "target.bw ~ predictor1.bw + predictor2.bw"
-        results = perform_regression(regression_data, formula, 'linear')
+        formula = "target ~ predictor1 + predictor2"
+        var_mapping = {
+            "target": "target.bw",
+            "predictor1": "predictor1.bw",
+            "predictor2": "predictor2.bw"
+        }
+        results = perform_regression(regression_data, formula, 'linear', var_mapping)
         
         # Should still work, just with fewer observations
         assert results['n_obs'] < len(regression_data)
@@ -158,10 +271,14 @@ class TestRegressionAnalysis:
     
     def test_regression_invalid_formula(self, regression_data):
         """Test regression with invalid formula."""
-        formula = "nonexistent.bw ~ predictor1.bw"
+        formula = "nonexistent ~ predictor1"
+        var_mapping = {
+            "nonexistent": "nonexistent.bw",
+            "predictor1": "predictor1.bw"
+        }
         
-        with pytest.raises(ValueError, match="Target variable.*not found"):
-            perform_regression(regression_data, formula, 'linear')
+        with pytest.raises(ValueError, match="Could not find data column for variable"):
+            perform_regression(regression_data, formula, 'linear', var_mapping)
 
 
 class TestDataHandling:
@@ -255,14 +372,18 @@ class TestCommandLineInterface:
         """Test parsing regression operation arguments."""
         args = parse_arguments([
             'regress',
-            '--formula', 'target.bw ~ pred1.bw + pred2.bw',
+            '--target', 'target.bw',
+            '--predictors', 'pred1.bw', 'pred2.bw',
+            '--formula', 'target ~ a + b',
             '--out-prediction', 'pred.bw',
             '--out-residuals', 'resid.bw',
             '--type', 'linear'
         ])
         
         assert args.operation == 'regress'
-        assert args.formula == 'target.bw ~ pred1.bw + pred2.bw'
+        assert args.target == 'target.bw'
+        assert args.predictors == ['pred1.bw', 'pred2.bw']
+        assert args.formula == 'target ~ a + b'
         assert args.out_prediction == 'pred.bw'
         assert args.out_residuals == 'resid.bw'
         assert args.type == 'linear'
@@ -283,7 +404,8 @@ class TestCommandLineInterface:
         """Test parsing chromosome filtering arguments."""
         args = parse_arguments([
             'regress',
-            '--formula', 'target.bw ~ pred.bw',
+            '--target', 'target.bw',
+            '--predictors', 'pred.bw',
             '--blacklisted-seqs', 'chrM', 'chrY',
             '--exclude-contigs',
             '--chromosome-pattern', 'chr[0-9]+$'
@@ -301,9 +423,10 @@ class TestEdgeCases:
     def test_empty_data_regression(self):
         """Test regression with empty data."""
         empty_data = pd.DataFrame(columns=['chromosome', 'start', 'end'])
+        var_mapping = {"y": "y.bw", "x": "x.bw"}
         
         with pytest.raises(ValueError):
-            perform_regression(empty_data, "y.bw ~ x.bw", 'linear')
+            perform_regression(empty_data, "y ~ x", 'linear', var_mapping)
     
     def test_single_predictor_regression(self):
         """Test regression with single predictor."""
@@ -320,8 +443,9 @@ class TestEdgeCases:
             'bw_1_target': y
         })
         
-        formula = "target.bw ~ predictor.bw"
-        results = perform_regression(data, formula, 'linear')
+        formula = "target ~ predictor"
+        var_mapping = {"target": "target.bw", "predictor": "predictor.bw"}
+        results = perform_regression(data, formula, 'linear', var_mapping)
         
         assert len(results['coefficients']) == 1
         assert abs(results['coefficients'][0] - 2.0) < 0.2
