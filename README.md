@@ -195,6 +195,107 @@ All bwops operations support comprehensive chromosome filtering (consistent with
 
 The regression analysis operates across all chromosomes simultaneously and prints summary statistics including R², p-values, and fitted coefficients to stdout. It can output predictions, residuals, and detailed statistics to separate files.
 
+### Correlation Analysis
+
+The `bwops correlate` command computes pairwise correlation matrices between multiple BigWig files with support for different correlation methods and analysis scopes:
+
+```bash
+# Basic pairwise correlation analysis
+bwops correlate file1.bw file2.bw file3.bw --out correlations.csv --chrom-sizes hg38.chrom.sizes
+
+# Spearman correlation with per-chromosome analysis
+bwops correlate *.bw --out spearman_corr.csv \
+      --method spearman --scope per-chromosome \
+      --chrom-sizes hg38.chrom.sizes
+
+# Correlation with visualization and detailed statistics
+bwops correlate ChIP1.bw ChIP2.bw Control1.bw Control2.bw \
+      --out correlation_matrix.csv \
+      --method pearson \
+      --include-stats \
+      --heatmap correlation_heatmap.png \
+      --scatter-plots scatter_plots/ \
+      --chrom-sizes hg38.chrom.sizes
+
+# Correlation analysis excluding problematic regions
+bwops correlate signal1.bw signal2.bw signal3.bw \
+      --out filtered_correlations.tsv --format tsv \
+      --exclude-contigs --blacklisted-seqs chrM chrY \
+      --chromosome-pattern "chr[0-9XY]+$" \
+      --min-overlap 5000 \
+      --chrom-sizes hg38.chrom.sizes
+
+# Regional correlation analysis
+bwops correlate enhancer_marks.bw promoter_marks.bw \
+      --out region_correlation.json --format json \
+      --region chr1:1000000-2000000 \
+      --method kendall \
+      --chrom-sizes hg38.chrom.sizes
+```
+
+#### Correlation Methods
+
+- **Pearson**: Linear correlation coefficient (default) - measures linear relationships
+- **Spearman**: Rank-based correlation - robust to outliers and non-linear monotonic relationships  
+- **Kendall**: Tau correlation coefficient - alternative rank-based method, more robust for small samples
+
+#### Analysis Scope
+
+- **Global** (default): Compute single correlation matrix using all genomic positions across chromosomes
+- **Per-chromosome**: Compute separate correlation matrices for each chromosome
+
+#### Required Arguments
+
+- **Input files**: Two or more BigWig files for correlation analysis
+- `--out`: Output file for correlation matrix
+- `--chrom-sizes`: Chromosome sizes file for BigWig processing
+
+#### Optional Arguments
+
+- `--method`: Correlation method (`pearson`, `spearman`, `kendall`)
+- `--scope`: Analysis scope (`global`, `per-chromosome`) 
+- `--format`: Output format (`csv`, `tsv`, `json`)
+- `--min-overlap`: Minimum number of overlapping non-zero values required (default: 1000)
+- `--include-stats`: Include additional statistics (mean, std, coverage) in output
+- `--heatmap`: Generate correlation heatmap plot (requires matplotlib)
+- `--scatter-plots`: Directory for pairwise scatter plots
+
+#### Output Formats
+
+The correlation analysis outputs a symmetric matrix showing correlations between all file pairs:
+
+**CSV/TSV format:**
+```csv
+File1,File2,File3
+File1,1.000,0.847,0.623
+File2,0.847,1.000,0.751
+File3,0.623,0.751,1.000
+```
+
+**JSON format** (with `--include-stats`):
+```json
+{
+  "correlations": {
+    "File1_vs_File2": 0.847,
+    "File1_vs_File3": 0.623,
+    "File2_vs_File3": 0.751
+  },
+  "statistics": {
+    "File1": {"mean": 2.34, "std": 1.45, "coverage": 0.23},
+    "File2": {"mean": 1.89, "std": 1.12, "coverage": 0.31}
+  }
+}
+```
+
+**Per-chromosome analysis** includes separate correlation matrices for each chromosome, helping identify chromosome-specific correlation patterns.
+
+#### Performance Notes
+
+- **Memory Efficient**: Processes BigWig files in chunks to handle large genomes
+- **Automatic Resolution**: Detects native BigWig resolution to optimize reading speed
+- **Filtering Integration**: Works seamlessly with all chromosome filtering options
+- **Parallel Processing**: Efficiently computes all pairwise correlations simultaneously
+
 ## Disclaimer
 
 kdpeak, being in its Alpha stage, encourages usage with care. We warmly welcome users to report any issues experienced during utilization. Together, we can enhance kdpeak for a better genomic analysis experience.
