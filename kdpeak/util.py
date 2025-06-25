@@ -802,13 +802,16 @@ def tracks_to_intervals(comb_data, step_size):
     with multiprocessing.Pool() as pool:
         for peaks in pool.imap(track_to_interval, jobs, 10):
             peaks_list.append(peaks)
-    if not peaks_list or all(df.empty for df in peaks_list):
+    # Filter out empty DataFrames before concatenation to avoid deprecation warning
+    non_empty_peaks = [df for df in peaks_list if not df.empty]
+    
+    if not non_empty_peaks:
         # Handle case where no peaks are found in any chromosome
         empty_peaks = pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
         empty_peaks["length"] = pd.Series([], dtype=int)
         return empty_peaks
     
-    peaks = pd.concat(peaks_list, axis=0)
+    peaks = pd.concat(non_empty_peaks, axis=0)
     peaks["start"] = peaks["start"].clip(lower=0)
     peaks["length"] = peaks["end"] - peaks["start"]
     return peaks

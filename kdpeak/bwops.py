@@ -18,6 +18,7 @@ from sklearn.metrics import r2_score
 import logging
 from typing import Dict, List, Tuple, Optional, Union
 import json
+from itertools import combinations
 
 from .util import setup_logging
 
@@ -56,8 +57,25 @@ def parse_arguments(args=None):
     regress_parser.add_argument('--format', choices=['bigwig', 'csv', 'bed', 'tsv', 'json'], 
                                default='bigwig', help='Output format (default: bigwig)')
     
+    # Correlation operation
+    corr_parser = subparsers.add_parser('correlate', help='Compute pairwise correlation matrix')
+    corr_parser.add_argument('input_files', nargs='+', help='Input BigWig files for correlation analysis')
+    corr_parser.add_argument('--out', required=True, help='Output file for correlation matrix')
+    corr_parser.add_argument('--method', choices=['pearson', 'spearman', 'kendall'], default='pearson',
+                            help='Correlation method (default: pearson)')
+    corr_parser.add_argument('--scope', choices=['global', 'per-chromosome'], default='global',
+                            help='Compute global correlation or per-chromosome correlations (default: global)')
+    corr_parser.add_argument('--min-overlap', type=int, default=1000,
+                            help='Minimum number of overlapping non-zero values required (default: 1000)')
+    corr_parser.add_argument('--format', choices=['csv', 'tsv', 'json'], default='csv',
+                            help='Output format (default: csv)')
+    corr_parser.add_argument('--include-stats', action='store_true',
+                            help='Include additional statistics (mean, std, coverage)')
+    corr_parser.add_argument('--heatmap', help='Output heatmap plot (requires matplotlib)')
+    corr_parser.add_argument('--scatter-plots', help='Directory for scatter plots of all pairs')
+    
     # Common arguments for all operations
-    for subparser in [add_parser, mult_parser, regress_parser]:
+    for subparser in [add_parser, mult_parser, regress_parser, corr_parser]:
         subparser.add_argument('--chrom-sizes', help='Chromosome sizes file (required for BigWig output)')
         subparser.add_argument('--region', help='Limit analysis to genomic region (chr:start-end)')
         subparser.add_argument('--chromosomes', nargs='+', help='Limit analysis to specific chromosomes')
@@ -572,6 +590,273 @@ def write_bigwig_output(data: pd.DataFrame, output_file: str,
             )
 
 
+def compute_correlation_matrix(data: pd.DataFrame, method: str = 'pearson', 
+                             min_overlap: int = 1000) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Compute pairwise correlation matrix for BigWig data.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Data with columns ['chromosome', 'start', 'end'] and BigWig value columns
+    method : str
+        Correlation method: 'pearson', 'spearman', or 'kendall'
+    min_overlap : int
+        Minimum number of overlapping non-zero values required
+        
+    Returns
+    -------
+    corr_matrix : pd.DataFrame
+        Correlation matrix
+    stats_dict : dict
+        Additional statistics for each file
+    """
+    logger = logging.getLogger()
+    
+    # Get BigWig value columns
+    value_cols = [col for col in data.columns if col.startswith('bw_')]
+    n_files = len(value_cols)
+    
+    if n_files < 2:
+        raise ValueError("Need at least 2 BigWig files for correlation analysis")
+    
+    logger.info(f"Computing {method} correlations for {n_files} files")
+    
+    # Clean column names for output
+    clean_names = [col.replace('bw_', '').replace('_', '.') for col in value_cols]
+    
+    # Initialize correlation matrix
+    corr_matrix = pd.DataFrame(index=clean_names, columns=clean_names, dtype=float)
+    np.fill_diagonal(corr_matrix.values, 1.0)
+    
+    # Compute statistics for each file
+    stats_dict = {}
+    for i, (col, name) in enumerate(zip(value_cols, clean_names)):
+        values = data[col].values
+        non_zero_mask = values != 0
+        stats_dict[name] = {
+            'mean': float(np.mean(values)),
+            'std': float(np.std(values)),
+            'mean_nonzero': float(np.mean(values[non_zero_mask])) if non_zero_mask.any() else 0.0,
+            'coverage': float(np.sum(non_zero_mask) / len(values)),
+            'n_points': len(values),
+            'n_nonzero': int(np.sum(non_zero_mask))
+        }
+    
+    # Compute pairwise correlations
+    n_pairs = len(list(combinations(range(n_files), 2)))
+    logger.info(f"Computing {n_pairs} pairwise correlations...")
+    
+    for i, j in combinations(range(n_files), 2):
+        col1, col2 = value_cols[i], value_cols[j]
+        name1, name2 = clean_names[i], clean_names[j]
+        
+        x = data[col1].values
+        y = data[col2].values
+        
+        # Remove NaN values and apply minimum overlap filter
+        mask = ~(np.isnan(x) | np.isnan(y))
+        x_clean, y_clean = x[mask], y[mask]
+        
+        if len(x_clean) < min_overlap:
+            logger.warning(f"Insufficient overlap between {name1} and {name2}: {len(x_clean)} < {min_overlap}")
+            corr_matrix.loc[name1, name2] = np.nan
+            corr_matrix.loc[name2, name1] = np.nan
+            continue
+        
+        # Compute correlation
+        try:
+            if method == 'pearson':
+                corr_coef, p_value = stats.pearsonr(x_clean, y_clean)
+            elif method == 'spearman':
+                corr_coef, p_value = stats.spearmanr(x_clean, y_clean)
+            elif method == 'kendall':
+                corr_coef, p_value = stats.kendalltau(x_clean, y_clean)
+            else:
+                raise ValueError(f"Unknown correlation method: {method}")
+            
+            corr_matrix.loc[name1, name2] = corr_coef
+            corr_matrix.loc[name2, name1] = corr_coef
+            
+            logger.debug(f"{name1} vs {name2}: r={corr_coef:.3f}, p={p_value:.2e}, n={len(x_clean)}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to compute correlation between {name1} and {name2}: {e}")
+            corr_matrix.loc[name1, name2] = np.nan
+            corr_matrix.loc[name2, name1] = np.nan
+    
+    return corr_matrix, stats_dict
+
+
+def compute_per_chromosome_correlations(data: pd.DataFrame, method: str = 'pearson',
+                                      min_overlap: int = 1000) -> Dict[str, Tuple[pd.DataFrame, Dict]]:
+    """
+    Compute correlation matrices for each chromosome separately.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Data with columns ['chromosome', 'start', 'end'] and BigWig value columns
+    method : str
+        Correlation method: 'pearson', 'spearman', or 'kendall'
+    min_overlap : int
+        Minimum number of overlapping non-zero values required
+        
+    Returns
+    -------
+    dict
+        Dictionary mapping chromosome names to (correlation_matrix, stats_dict) tuples
+    """
+    logger = logging.getLogger()
+    
+    chromosomes = data['chromosome'].unique()
+    logger.info(f"Computing per-chromosome correlations for {len(chromosomes)} chromosomes")
+    
+    results = {}
+    for chrom in chromosomes:
+        logger.debug(f"Computing correlations for {chrom}")
+        chrom_data = data[data['chromosome'] == chrom].copy()
+        
+        try:
+            corr_matrix, stats_dict = compute_correlation_matrix(
+                chrom_data, method=method, min_overlap=min_overlap
+            )
+            results[chrom] = (corr_matrix, stats_dict)
+        except Exception as e:
+            logger.warning(f"Failed to compute correlations for {chrom}: {e}")
+            results[chrom] = (None, None)
+    
+    return results
+
+
+def write_correlation_output(corr_matrix: pd.DataFrame, stats_dict: Dict, 
+                           output_file: str, format_type: str = 'csv',
+                           include_stats: bool = False, method: str = 'pearson'):
+    """Write correlation results to file."""
+    logger = logging.getLogger()
+    
+    if format_type == 'csv':
+        corr_matrix.to_csv(output_file)
+        if include_stats:
+            stats_file = output_file.replace('.csv', '_stats.csv')
+            pd.DataFrame(stats_dict).T.to_csv(stats_file)
+            logger.info(f"Statistics written to {stats_file}")
+    elif format_type == 'tsv':
+        corr_matrix.to_csv(output_file, sep='\t')
+        if include_stats:
+            stats_file = output_file.replace('.tsv', '_stats.tsv')
+            pd.DataFrame(stats_dict).T.to_csv(stats_file, sep='\t')
+            logger.info(f"Statistics written to {stats_file}")
+    elif format_type == 'json':
+        result = {
+            'correlation_matrix': corr_matrix.to_dict(),
+            'method': method
+        }
+        if include_stats:
+            result['statistics'] = stats_dict
+        
+        with open(output_file, 'w') as f:
+            json.dump(result, f, indent=2)
+    
+    logger.info(f"Correlation matrix written to {output_file}")
+
+
+def create_correlation_heatmap(corr_matrix: pd.DataFrame, output_file: str, method: str = 'pearson'):
+    """Create a heatmap visualization of the correlation matrix."""
+    try:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+    except ImportError:
+        raise ImportError("matplotlib and seaborn are required for heatmap generation. Install with: pip install matplotlib seaborn")
+    
+    logger = logging.getLogger()
+    
+    plt.figure(figsize=(10, 8))
+    
+    # Create heatmap
+    mask = corr_matrix.isnull()
+    sns.heatmap(corr_matrix.astype(float), 
+                annot=True, 
+                cmap='RdBu_r', 
+                center=0,
+                square=True,
+                mask=mask,
+                cbar_kws={'label': f'{method.title()} Correlation'})
+    
+    plt.title(f'{method.title()} Correlation Matrix')
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    logger.info(f"Heatmap saved to {output_file}")
+
+
+def create_scatter_plots(data: pd.DataFrame, output_dir: str, method: str = 'pearson'):
+    """Create scatter plots for all pairwise comparisons."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise ImportError("matplotlib is required for scatter plot generation. Install with: pip install matplotlib")
+    
+    logger = logging.getLogger()
+    os.makedirs(output_dir, exist_ok=True)
+    
+    value_cols = [col for col in data.columns if col.startswith('bw_')]
+    clean_names = [col.replace('bw_', '').replace('_', '.') for col in value_cols]
+    
+    n_pairs = len(list(combinations(range(len(value_cols)), 2)))
+    logger.info(f"Creating {n_pairs} scatter plots...")
+    
+    for i, j in combinations(range(len(value_cols)), 2):
+        col1, col2 = value_cols[i], value_cols[j]
+        name1, name2 = clean_names[i], clean_names[j]
+        
+        x = data[col1].values
+        y = data[col2].values
+        
+        # Remove NaN values and sample for plotting if too many points
+        mask = ~(np.isnan(x) | np.isnan(y))
+        x_clean, y_clean = x[mask], y[mask]
+        
+        if len(x_clean) > 50000:  # Sample for performance
+            idx = np.random.choice(len(x_clean), 50000, replace=False)
+            x_clean, y_clean = x_clean[idx], y_clean[idx]
+        
+        # Compute correlation for plot
+        try:
+            if method == 'pearson':
+                corr_coef, _ = stats.pearsonr(x_clean, y_clean)
+            elif method == 'spearman':
+                corr_coef, _ = stats.spearmanr(x_clean, y_clean)
+            elif method == 'kendall':
+                corr_coef, _ = stats.kendalltau(x_clean, y_clean)
+        except:
+            corr_coef = np.nan
+        
+        # Create scatter plot
+        plt.figure(figsize=(8, 6))
+        plt.scatter(x_clean, y_clean, alpha=0.5, s=1)
+        plt.xlabel(name1)
+        plt.ylabel(name2)
+        plt.title(f'{name1} vs {name2}\n{method.title()} r = {corr_coef:.3f}')
+        
+        # Add trend line
+        if not np.isnan(corr_coef):
+            z = np.polyfit(x_clean, y_clean, 1)
+            p = np.poly1d(z)
+            plt.plot(x_clean, p(x_clean), "r--", alpha=0.8)
+        
+        plt.tight_layout()
+        
+        safe_name1 = name1.replace('/', '_').replace(' ', '_')
+        safe_name2 = name2.replace('/', '_').replace(' ', '_')
+        plot_file = os.path.join(output_dir, f'{safe_name1}_vs_{safe_name2}.png')
+        plt.savefig(plot_file, dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    logger.info(f"Scatter plots saved to {output_dir}")
+
+
 def main():
     """Main function for bwops tool."""
     args = parse_arguments()
@@ -598,7 +883,7 @@ def main():
         region = parse_region(args.region)
     
     # Get input files based on operation
-    if args.operation in ['add', 'multiply']:
+    if args.operation in ['add', 'multiply', 'correlate']:
         input_files = args.input_files
     elif args.operation == 'regress':
         # Extract file names from formula
@@ -737,6 +1022,67 @@ def main():
             
             with open(args.out_stats, 'w') as f:
                 json.dump(stats_dict, f, indent=2)
+                
+    elif args.operation == 'correlate':
+        logger.info("Performing correlation analysis...")
+        
+        if args.scope == 'global':
+            # Global correlation across all chromosomes
+            corr_matrix, stats_dict = compute_correlation_matrix(
+                data, method=args.method, min_overlap=args.min_overlap
+            )
+            
+            # Print summary
+            print("\n" + "="*50)
+            print("CORRELATION ANALYSIS RESULTS")
+            print("="*50)
+            print(f"Method: {args.method}")
+            print(f"Scope: {args.scope}")
+            print(f"Number of files: {len(input_files)}")
+            print(f"Total data points: {len(data)}")
+            print(f"Minimum overlap required: {args.min_overlap}")
+            print("\nCorrelation Matrix:")
+            print(corr_matrix.round(3))
+            
+            # Write output
+            write_correlation_output(
+                corr_matrix, stats_dict, args.out, args.format, 
+                args.include_stats, args.method
+            )
+            
+        elif args.scope == 'per-chromosome':
+            # Per-chromosome correlations
+            chrom_results = compute_per_chromosome_correlations(
+                data, method=args.method, min_overlap=args.min_overlap
+            )
+            
+            # Print summary
+            print("\n" + "="*50)
+            print("PER-CHROMOSOME CORRELATION RESULTS")
+            print("="*50)
+            print(f"Method: {args.method}")
+            print(f"Number of chromosomes: {len(chrom_results)}")
+            
+            # Write per-chromosome results
+            for chrom, (corr_matrix, stats_dict) in chrom_results.items():
+                if corr_matrix is not None:
+                    chrom_output = args.out.replace('.', f'_{chrom}.')
+                    write_correlation_output(
+                        corr_matrix, stats_dict, chrom_output, args.format,
+                        args.include_stats, args.method
+                    )
+                    print(f"\n{chrom}:")
+                    print(corr_matrix.round(3))
+        
+        # Generate optional visualizations
+        if args.heatmap:
+            if args.scope == 'global':
+                create_correlation_heatmap(corr_matrix, args.heatmap, args.method)
+            else:
+                logger.warning("Heatmap generation only supported for global correlations")
+        
+        if args.scatter_plots:
+            create_scatter_plots(data, args.scatter_plots, args.method)
     
     logger.info("Analysis completed successfully")
 
