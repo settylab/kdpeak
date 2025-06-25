@@ -7,6 +7,7 @@ regression analysis, and multiple output formats.
 """
 
 import os
+import sys
 import argparse
 import re
 import numpy as np
@@ -20,7 +21,7 @@ from typing import Dict, List, Tuple, Optional, Union
 import json
 from itertools import combinations
 
-from .util import setup_logging
+from .util import setup_logging, handle_error, validate_file_exists, validate_output_directory, safe_file_operation
 
 
 def parse_arguments(args=None):
@@ -858,234 +859,304 @@ def create_scatter_plots(data: pd.DataFrame, output_dir: str, method: str = 'pea
 
 
 def main():
-    """Main function for bwops tool."""
-    args = parse_arguments()
-    
-    if args.operation is None:
-        print("Please specify an operation. Use --help for available operations.")
-        import sys
-        sys.exit(1)
-    
-    logger = setup_logging(args.logLevel, args.logfile)
-    
-    # Read chromosome sizes if needed
-    chrom_sizes = None
-    if args.format == 'bigwig' or any(getattr(args, attr, None) and attr.startswith('out_') 
-                                     for attr in vars(args)):
-        if not args.chrom_sizes:
-            logger.error("Chromosome sizes file required for BigWig output")
-            raise ValueError("--chrom-sizes required for BigWig output")
-        chrom_sizes = read_chrom_sizes(args.chrom_sizes)
-    
-    # Parse region if specified
-    region = None
-    if args.region:
-        region = parse_region(args.region)
-    
-    # Get input files based on operation
-    if args.operation in ['add', 'multiply', 'correlate']:
-        input_files = args.input_files
-    elif args.operation == 'regress':
-        # Extract file names from formula
-        target_var, predictor_terms = parse_formula(args.formula)
-        input_files = []
-        for var in [target_var] + predictor_terms:
-            # Extract filename from variable (remove interaction symbols)
-            clean_var = re.sub(r'[*:].*', '', var.strip())
-            if clean_var.endswith('.bw') or clean_var.endswith('.bigwig'):
-                input_files.append(clean_var)
-        input_files = list(set(input_files))  # Remove duplicates
-    
-    # Find common chromosomes with filtering
-    common_chroms = get_common_chromosomes(
-        input_files, 
-        args.blacklisted_seqs, 
-        args.exclude_contigs, 
-        args.chromosome_pattern
-    )
-    
-    # Apply additional chromosome selection if specified
-    if args.chromosomes:
-        common_chroms = [c for c in common_chroms if c in args.chromosomes]
-    
-    if not common_chroms:
-        logger.error("No common chromosomes found after filtering")
-        return
-    
-    # Less verbose chromosome listing - just count and first few
-    if len(common_chroms) <= 5:
-        logger.info(f"Processing {len(common_chroms)} chromosomes: {common_chroms}")
-    else:
-        logger.info(f"Processing {len(common_chroms)} chromosomes (showing first 5): {common_chroms[:5]}...")
-    
-    # Determine span using native resolution to avoid interpolation
-    if hasattr(args, 'span') and args.span is not None:
-        span = args.span
-        logger.info(f"Using user-specified span: {span} bp")
-        if span < 1000:
-            logger.warning("Small span values may result in slow processing for large chromosomes")
-    else:
-        span, needs_warning = get_native_resolution(input_files, common_chroms)
-        if needs_warning:
-            logger.warning("Consider using BigWig files with matching resolutions for optimal performance")
+    """Main function for bwops tool with comprehensive error handling."""
+    try:
+        args = parse_arguments()
+        
+        if args.operation is None:
+            print("Please specify an operation. Use --help for available operations.")
+            return 1
+        
+        logger = setup_logging(args.logLevel, args.logfile)
+
+        # Validate input files early
+        input_files = getattr(args, 'input_files', [])
+        if hasattr(args, 'formula') and args.formula:
+            # For regression, extract files from formula
+            import re
+            formula_files = re.findall(r'[\w\./]+\.bw(?:ig)?', args.formula)
+            input_files.extend(formula_files)
+        
+        for input_file in input_files:
+            try:
+                validate_file_exists(input_file, "BigWig input file")
+            except (FileNotFoundError, PermissionError) as e:
+                handle_error(e, f"Cannot access input file '{input_file}'", [
+                    "Check that the BigWig file path is correct",
+                    "Verify the file exists and is readable", 
+                    "Ensure the file is in BigWig format (.bw or .bigwig)"
+                ])
+                return 1
+        
+        # Validate output directory
+        if hasattr(args, 'out') and args.out:
+            try:
+                validate_output_directory(args.out)
+            except PermissionError as e:
+                handle_error(e, "Cannot write to output directory", [
+                    "Create the output directory if needed",
+                    "Check directory permissions",
+                    "Use a different output location"
+                ])
+                return 1
+
+        # Read chromosome sizes if needed  
+        chrom_sizes = None
+        if args.format == 'bigwig' or any(getattr(args, attr, None) and attr.startswith('out_') 
+                                         for attr in vars(args)):
+            if not args.chrom_sizes:
+                handle_error(
+                    ValueError("Chromosome sizes file required for BigWig output"),
+                    "Missing required chromosome sizes file",
+                    [
+                        "Add --chrom-sizes argument with a chromosome sizes file",
+                        "Download with: fetchChromSizes hg38 hg38.chrom.sizes", 
+                        "Or use a different output format (csv, tsv, json)"
+                    ]
+                )
+                return 1
+            
+            try:
+                validate_file_exists(args.chrom_sizes, "chromosome sizes file")
+                chrom_sizes = read_chrom_sizes(args.chrom_sizes)
+            except (FileNotFoundError, PermissionError) as e:
+                handle_error(e, "Failed to read chromosome sizes file", [
+                    "Check file path and permissions",
+                    "Ensure file format: chromosome_name<tab>size",
+                    "Download with fetchChromSizes if needed"
+                ])
+                return 1
+            except Exception as e:
+                handle_error(e, "Invalid chromosome sizes file format", [
+                    "Ensure file format: chromosome_name<tab>size", 
+                    "Check for proper tab separation",
+                    "Verify numeric sizes in second column"
+                ])
+                return 1
+        
+        # Parse region if specified
+        region = None
+        if args.region:
+            region = parse_region(args.region)
+        
+        # Get input files based on operation
+        if args.operation in ['add', 'multiply', 'correlate']:
+            input_files = args.input_files
+        elif args.operation == 'regress':
+            # Extract file names from formula
+            target_var, predictor_terms = parse_formula(args.formula)
+            input_files = []
+            for var in [target_var] + predictor_terms:
+                # Extract filename from variable (remove interaction symbols)
+                clean_var = re.sub(r'[*:].*', '', var.strip())
+                if clean_var.endswith('.bw') or clean_var.endswith('.bigwig'):
+                    input_files.append(clean_var)
+            input_files = list(set(input_files))  # Remove duplicates
+        
+        # Find common chromosomes with filtering
+        common_chroms = get_common_chromosomes(
+            input_files, 
+            args.blacklisted_seqs, 
+            args.exclude_contigs, 
+            args.chromosome_pattern
+        )
+        
+        # Apply additional chromosome selection if specified
+        if args.chromosomes:
+            common_chroms = [c for c in common_chroms if c in args.chromosomes]
+        
+        if not common_chroms:
+            logger.error("No common chromosomes found after filtering")
+            return
+        
+        # Less verbose chromosome listing - just count and first few
+        if len(common_chroms) <= 5:
+            logger.info(f"Processing {len(common_chroms)} chromosomes: {common_chroms}")
         else:
-            logger.info(f"Using native resolution: {span} bp (no interpolation needed)")
+            logger.info(f"Processing {len(common_chroms)} chromosomes (showing first 5): {common_chroms[:5]}...")
         
-        # Suggest larger span for performance if native resolution is very small
-        if span < 50:
-            total_genome_size = sum(250_000_000 for _ in common_chroms)  # Rough estimate
-            estimated_intervals = total_genome_size // span
-            if estimated_intervals > 10_000_000:  # 10M intervals
-                logger.warning(f"Native resolution of {span}bp will create ~{estimated_intervals//1_000_000}M intervals")
-                logger.warning("For faster processing, consider using --span 1000 or larger")
-                logger.warning("This will require interpolation but may complete much faster")
-    
-    # Read data
-    logger.info("Reading BigWig data...")
-    data = read_bigwig_data(input_files, common_chroms, span, region)
-    
-    if data.empty:
-        logger.error("No data read from input files")
-        return
-    
-    logger.info(f"Read {len(data)} data points")
-    
-    # Perform operation
-    if args.operation == 'add':
-        value_cols = [col for col in data.columns if col.startswith('bw_')]
-        data['result'] = data[value_cols].sum(axis=1)
-        write_output(data[['chromosome', 'start', 'end', 'result']], 
-                    args.out, args.format, chrom_sizes, span)
-        
-    elif args.operation == 'multiply':
-        value_cols = [col for col in data.columns if col.startswith('bw_')]
-        data['result'] = data[value_cols].prod(axis=1)
-        write_output(data[['chromosome', 'start', 'end', 'result']], 
-                    args.out, args.format, chrom_sizes, span)
-        
-    elif args.operation == 'regress':
-        logger.info("Performing regression analysis...")
-        results = perform_regression(data, args.formula, args.type)
-        
-        # Print summary statistics
-        print("\n" + "="*50)
-        print("REGRESSION RESULTS")
-        print("="*50)
-        print(f"Formula: {args.formula}")
-        print(f"Regression type: {args.type}")
-        print(f"Number of observations: {results['n_obs']}")
-        
-        if args.type == 'linear':
-            print(f"R-squared: {results['r2']:.4f}")
-            print(f"MSE: {results['mse']:.4f}")
-        
-        print(f"\nIntercept: {results['intercept']:.4f}")
-        print("\nCoefficients:")
-        for name, coef in zip(results['variable_names'], results['coefficients']):
-            if args.type == 'linear' and 'p_values' in results:
-                pval_idx = results['variable_names'].index(name)
-                print(f"  {name}: {coef:.4f} (p-value: {results['p_values'][pval_idx]:.4f})")
+        # Determine span using native resolution to avoid interpolation
+        if hasattr(args, 'span') and args.span is not None:
+            span = args.span
+            logger.info(f"Using user-specified span: {span} bp")
+            if span < 1000:
+                logger.warning("Small span values may result in slow processing for large chromosomes")
+        else:
+            span, needs_warning = get_native_resolution(input_files, common_chroms)
+            if needs_warning:
+                logger.warning("Consider using BigWig files with matching resolutions for optimal performance")
             else:
-                print(f"  {name}: {coef:.4f}")
+                logger.info(f"Using native resolution: {span} bp (no interpolation needed)")
+            
+            # Suggest larger span for performance if native resolution is very small
+            if span < 50:
+                total_genome_size = sum(250_000_000 for _ in common_chroms)  # Rough estimate
+                estimated_intervals = total_genome_size // span
+                if estimated_intervals > 10_000_000:  # 10M intervals
+                    logger.warning(f"Native resolution of {span}bp will create ~{estimated_intervals//1_000_000}M intervals")
+                    logger.warning("For faster processing, consider using --span 1000 or larger")
+                    logger.warning("This will require interpolation but may complete much faster")
         
-        # Write outputs if specified
-        if args.out_prediction:
-            pred_data = data.copy()
-            pred_data['prediction'] = np.nan
-            pred_data.loc[results['mask'], 'prediction'] = results['predictions']
-            write_output(pred_data[['chromosome', 'start', 'end', 'prediction']], 
-                        args.out_prediction, args.format, chrom_sizes, span)
+        # Read data
+        logger.info("Reading BigWig data...")
+        data = read_bigwig_data(input_files, common_chroms, span, region)
         
-        if args.out_residuals:
-            resid_data = data.copy()
-            resid_data['residuals'] = np.nan
-            resid_data.loc[results['mask'], 'residuals'] = results['residuals']
-            write_output(resid_data[['chromosome', 'start', 'end', 'residuals']], 
-                        args.out_residuals, args.format, chrom_sizes, span)
+        if data.empty:
+            logger.error("No data read from input files")
+            return
         
-        if args.out_stats:
-            # Write detailed statistics
-            stats_dict = {
-                'formula': args.formula,
-                'regression_type': args.type,
-                'n_observations': results['n_obs'],
-                'intercept': float(results['intercept']),
-                'coefficients': {name: float(coef) for name, coef in 
-                               zip(results['variable_names'], results['coefficients'])}
-            }
+        logger.info(f"Read {len(data)} data points")
+        
+        # Perform operation
+        if args.operation == 'add':
+            value_cols = [col for col in data.columns if col.startswith('bw_')]
+            data['result'] = data[value_cols].sum(axis=1)
+            write_output(data[['chromosome', 'start', 'end', 'result']], 
+                        args.out, args.format, chrom_sizes, span)
+            
+        elif args.operation == 'multiply':
+            value_cols = [col for col in data.columns if col.startswith('bw_')]
+            data['result'] = data[value_cols].prod(axis=1)
+            write_output(data[['chromosome', 'start', 'end', 'result']], 
+                        args.out, args.format, chrom_sizes, span)
+            
+        elif args.operation == 'regress':
+            logger.info("Performing regression analysis...")
+            results = perform_regression(data, args.formula, args.type)
+            
+            # Print summary statistics
+            print("\n" + "="*50)
+            print("REGRESSION RESULTS")
+            print("="*50)
+            print(f"Formula: {args.formula}")
+            print(f"Regression type: {args.type}")
+            print(f"Number of observations: {results['n_obs']}")
             
             if args.type == 'linear':
-                stats_dict['r_squared'] = float(results['r2'])
-                stats_dict['mse'] = float(results['mse'])
-                stats_dict['p_values'] = {name: float(pval) for name, pval in 
-                                        zip(results['variable_names'], results['p_values'])}
+                print(f"R-squared: {results['r2']:.4f}")
+                print(f"MSE: {results['mse']:.4f}")
             
-            with open(args.out_stats, 'w') as f:
-                json.dump(stats_dict, f, indent=2)
+            print(f"\nIntercept: {results['intercept']:.4f}")
+            print("\nCoefficients:")
+            for name, coef in zip(results['variable_names'], results['coefficients']):
+                if args.type == 'linear' and 'p_values' in results:
+                    pval_idx = results['variable_names'].index(name)
+                    print(f"  {name}: {coef:.4f} (p-value: {results['p_values'][pval_idx]:.4f})")
+                else:
+                    print(f"  {name}: {coef:.4f}")
+            
+            # Write outputs if specified
+            if args.out_prediction:
+                pred_data = data.copy()
+                pred_data['prediction'] = np.nan
+                pred_data.loc[results['mask'], 'prediction'] = results['predictions']
+                write_output(pred_data[['chromosome', 'start', 'end', 'prediction']], 
+                            args.out_prediction, args.format, chrom_sizes, span)
+            
+            if args.out_residuals:
+                resid_data = data.copy()
+                resid_data['residuals'] = np.nan
+                resid_data.loc[results['mask'], 'residuals'] = results['residuals']
+                write_output(resid_data[['chromosome', 'start', 'end', 'residuals']], 
+                            args.out_residuals, args.format, chrom_sizes, span)
+            
+            if args.out_stats:
+                # Write detailed statistics
+                stats_dict = {
+                    'formula': args.formula,
+                    'regression_type': args.type,
+                    'n_observations': results['n_obs'],
+                    'intercept': float(results['intercept']),
+                    'coefficients': {name: float(coef) for name, coef in 
+                                   zip(results['variable_names'], results['coefficients'])}
+                }
                 
-    elif args.operation == 'correlate':
-        logger.info("Performing correlation analysis...")
-        
-        if args.scope == 'global':
-            # Global correlation across all chromosomes
-            corr_matrix, stats_dict = compute_correlation_matrix(
-                data, method=args.method, min_overlap=args.min_overlap
-            )
+                if args.type == 'linear':
+                    stats_dict['r_squared'] = float(results['r2'])
+                    stats_dict['mse'] = float(results['mse'])
+                    stats_dict['p_values'] = {name: float(pval) for name, pval in 
+                                            zip(results['variable_names'], results['p_values'])}
+                
+                with open(args.out_stats, 'w') as f:
+                    json.dump(stats_dict, f, indent=2)
+                    
+        elif args.operation == 'correlate':
+            logger.info("Performing correlation analysis...")
             
-            # Print summary
-            print("\n" + "="*50)
-            print("CORRELATION ANALYSIS RESULTS")
-            print("="*50)
-            print(f"Method: {args.method}")
-            print(f"Scope: {args.scope}")
-            print(f"Number of files: {len(input_files)}")
-            print(f"Total data points: {len(data)}")
-            print(f"Minimum overlap required: {args.min_overlap}")
-            print("\nCorrelation Matrix:")
-            print(corr_matrix.round(3))
-            
-            # Write output
-            write_correlation_output(
-                corr_matrix, stats_dict, args.out, args.format, 
-                args.include_stats, args.method
-            )
-            
-        elif args.scope == 'per-chromosome':
-            # Per-chromosome correlations
-            chrom_results = compute_per_chromosome_correlations(
-                data, method=args.method, min_overlap=args.min_overlap
-            )
-            
-            # Print summary
-            print("\n" + "="*50)
-            print("PER-CHROMOSOME CORRELATION RESULTS")
-            print("="*50)
-            print(f"Method: {args.method}")
-            print(f"Number of chromosomes: {len(chrom_results)}")
-            
-            # Write per-chromosome results
-            for chrom, (corr_matrix, stats_dict) in chrom_results.items():
-                if corr_matrix is not None:
-                    chrom_output = args.out.replace('.', f'_{chrom}.')
-                    write_correlation_output(
-                        corr_matrix, stats_dict, chrom_output, args.format,
-                        args.include_stats, args.method
-                    )
-                    print(f"\n{chrom}:")
-                    print(corr_matrix.round(3))
-        
-        # Generate optional visualizations
-        if args.heatmap:
             if args.scope == 'global':
-                create_correlation_heatmap(corr_matrix, args.heatmap, args.method)
-            else:
-                logger.warning("Heatmap generation only supported for global correlations")
-        
-        if args.scatter_plots:
-            create_scatter_plots(data, args.scatter_plots, args.method)
-    
-    logger.info("Analysis completed successfully")
+                # Global correlation across all chromosomes
+                corr_matrix, stats_dict = compute_correlation_matrix(
+                    data, method=args.method, min_overlap=args.min_overlap
+                )
+                
+                # Print summary
+                print("\n" + "="*50)
+                print("CORRELATION ANALYSIS RESULTS")
+                print("="*50)
+                print(f"Method: {args.method}")
+                print(f"Scope: {args.scope}")
+                print(f"Number of files: {len(input_files)}")
+                print(f"Total data points: {len(data)}")
+                print(f"Minimum overlap required: {args.min_overlap}")
+                print("\nCorrelation Matrix:")
+                print(corr_matrix.round(3))
+                
+                # Write output
+                write_correlation_output(
+                    corr_matrix, stats_dict, args.out, args.format, 
+                    args.include_stats, args.method
+                )
+                
+            elif args.scope == 'per-chromosome':
+                # Per-chromosome correlations
+                chrom_results = compute_per_chromosome_correlations(
+                    data, method=args.method, min_overlap=args.min_overlap
+                )
+                
+                # Print summary
+                print("\n" + "="*50)
+                print("PER-CHROMOSOME CORRELATION RESULTS")
+                print("="*50)
+                print(f"Method: {args.method}")
+                print(f"Number of chromosomes: {len(chrom_results)}")
+                
+                # Write per-chromosome results
+                for chrom, (corr_matrix, stats_dict) in chrom_results.items():
+                    if corr_matrix is not None:
+                        chrom_output = args.out.replace('.', f'_{chrom}.')
+                        write_correlation_output(
+                            corr_matrix, stats_dict, chrom_output, args.format,
+                            args.include_stats, args.method
+                        )
+                        print(f"\n{chrom}:")
+                        print(corr_matrix.round(3))
+            
+            # Generate optional visualizations
+            if args.heatmap:
+                if args.scope == 'global':
+                    create_correlation_heatmap(corr_matrix, args.heatmap, args.method)
+                else:
+                    logger.warning("Heatmap generation only supported for global correlations")
+            
+            if args.scatter_plots:
+                create_scatter_plots(data, args.scatter_plots, args.method)
+            
+            logger.info("Analysis completed successfully")
+            print(f"\nSUCCESS: {args.operation} operation completed!")
+            return 0
+
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user", file=sys.stderr)
+        return 130
+    except Exception as e:
+        handle_error(e, f"Unexpected error during {getattr(args, 'operation', 'bwops')} operation", [
+            "Run with --log DEBUG for detailed information",
+            "Check input file formats and parameters", 
+            "Ensure sufficient memory and disk space",
+            "Report this error if it persists"
+        ])
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -6,6 +6,8 @@ import pyBigWig
 import multiprocessing
 import logging
 import re
+import sys
+import traceback
 
 
 def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
@@ -42,6 +44,143 @@ def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
 
 
 logger = setup_logging()
+
+
+def handle_error(error: Exception, context: str, suggestions: list = None, logger=None):
+    """
+    Handle errors with user-friendly messages while preserving debugging information.
+    
+    Parameters
+    ----------
+    error : Exception
+        The exception that occurred
+    context : str
+        User-friendly description of what was being attempted
+    suggestions : list, optional
+        List of suggested solutions
+    logger : logging.Logger, optional
+        Logger instance to use. If None, uses module logger
+    """
+    if logger is None:
+        logger = logging.getLogger()
+    
+    # User-friendly error message
+    error_msg = f"ERROR: {context}"
+    if hasattr(error, '__class__'):
+        error_msg += f" ({error.__class__.__name__})"
+    
+    print(f"\n{error_msg}", file=sys.stderr)
+    print(f"Reason: {str(error)}", file=sys.stderr)
+    
+    # Add suggestions if provided
+    if suggestions:
+        print("\nSuggested solutions:", file=sys.stderr)
+        for i, suggestion in enumerate(suggestions, 1):
+            print(f"  {i}. {suggestion}", file=sys.stderr)
+    
+    # Log detailed technical information for debugging
+    logger.error(f"Error in {context}: {error}")
+    logger.debug("Full traceback:", exc_info=True)
+    
+    # Print a note about debug logging
+    current_level = logger.getEffectiveLevel()
+    if current_level > logging.DEBUG:
+        print(f"\nFor technical details, run with --log DEBUG", file=sys.stderr)
+
+
+def validate_file_exists(file_path: str, file_type: str = "file") -> None:
+    """
+    Validate that a file exists and is readable.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to the file to validate
+    file_type : str
+        Description of the file type for error messages
+        
+    Raises
+    ------
+    FileNotFoundError
+        If the file doesn't exist
+    PermissionError
+        If the file exists but isn't readable
+    """
+    import os
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"The {file_type} '{file_path}' does not exist")
+    
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"'{file_path}' exists but is not a file")
+    
+    if not os.access(file_path, os.R_OK):
+        raise PermissionError(f"The {file_type} '{file_path}' exists but cannot be read (permission denied)")
+
+
+def validate_output_directory(file_path: str) -> None:
+    """
+    Validate that the output directory exists and is writable.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to the output file
+        
+    Raises
+    ------
+    PermissionError
+        If the directory doesn't exist or isn't writable
+    """
+    import os
+    
+    output_dir = os.path.dirname(os.path.abspath(file_path))
+    
+    if not os.path.exists(output_dir):
+        raise PermissionError(f"Output directory '{output_dir}' does not exist")
+    
+    if not os.access(output_dir, os.W_OK):
+        raise PermissionError(f"Cannot write to output directory '{output_dir}' (permission denied)")
+
+
+def safe_file_operation(operation_func, context: str, suggestions: list = None):
+    """
+    Safely execute a file operation with proper error handling.
+    
+    Parameters
+    ----------
+    operation_func : callable
+        Function to execute safely
+    context : str
+        Description of the operation for error messages
+    suggestions : list, optional
+        List of suggested solutions for common issues
+    
+    Returns
+    -------
+    Result of operation_func, or None if an error occurred
+    """
+    try:
+        return operation_func()
+    except FileNotFoundError as e:
+        default_suggestions = [
+            "Check that the file path is correct",
+            "Verify the file exists in the specified location",
+            "Use absolute paths instead of relative paths"
+        ]
+        handle_error(e, context, suggestions or default_suggestions)
+        return None
+    except PermissionError as e:
+        default_suggestions = [
+            "Check file/directory permissions",
+            "Ensure you have read/write access to the file",
+            "Try running with appropriate permissions"
+        ]
+        handle_error(e, context, suggestions or default_suggestions)
+        return None
+    except Exception as e:
+        handle_error(e, context, suggestions)
+        return None
 
 
 def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame:
@@ -185,9 +324,15 @@ def read_bed(file_path: str) -> pd.DataFrame:
         logger.info(f"Read {len(bed_content)} valid intervals from {file_path}")
         return bed_content
         
+    except pd.errors.EmptyDataError:
+        raise ValueError(f"BED file '{file_path}' is empty or contains no valid data")
+    except pd.errors.ParserError as e:
+        raise ValueError(f"BED file '{file_path}' has invalid format: {e}. Expected tab-separated format with at least 3 columns (chromosome, start, end)")
+    except UnicodeDecodeError:
+        raise ValueError(f"BED file '{file_path}' contains invalid characters. Ensure the file is a text file with proper encoding")
     except Exception as e:
         logger.error(f"Error reading BED file {file_path}: {e}")
-        raise
+        raise ValueError(f"Failed to read BED file '{file_path}': {e}")
 
 
 def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
