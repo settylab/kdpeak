@@ -182,12 +182,6 @@ All bwops operations support comprehensive chromosome filtering (consistent with
 - `--chromosomes`: Analyze only specified chromosomes
 - `--region`: Limit analysis to genomic region (chr:start-end)
 
-### Performance Features
-
-- **Native Resolution Detection**: Automatically detects BigWig file resolution to avoid slow interpolation
-- **Global Regression**: Analyzes all chromosomes simultaneously for genome-wide associations
-- **Memory Efficient**: Uses native intervals instead of creating dense coordinate grids
-
 ### Additional Options
 
 - `--span INT`: Resolution in base pairs (default: auto-detect from BigWig files)
@@ -288,13 +282,6 @@ File3,0.623,0.751,1.000
 ```
 
 **Per-chromosome analysis** includes separate correlation matrices for each chromosome, helping identify chromosome-specific correlation patterns.
-
-#### Performance Notes
-
-- **Memory Efficient**: Processes BigWig files in chunks to handle large genomes
-- **Automatic Resolution**: Detects native BigWig resolution to optimize reading speed
-- **Filtering Integration**: Works seamlessly with all chromosome filtering options
-- **Parallel Processing**: Efficiently computes all pairwise correlations simultaneously
 
 ## Disclaimer
 
