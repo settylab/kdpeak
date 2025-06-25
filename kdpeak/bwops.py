@@ -234,24 +234,32 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
                     # Check if target span is present in the file
                     spans_match = span in native_spans
                     can_use_fast_read[bw_file] = spans_match
-                    logger.info(f"File {os.path.basename(bw_file)}: found spans {sorted(native_spans)}, target={span}, can_use_fast={spans_match}")
+                    logger.debug(f"File {os.path.basename(bw_file)}: found spans {sorted(native_spans)}, target={span}, can_use_fast={spans_match}")
                 else:
                     can_use_fast_read[bw_file] = False
-                    logger.info(f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False")
+                    logger.debug(f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False")
             else:
                 can_use_fast_read[bw_file] = False
-                logger.info(f"File {os.path.basename(bw_file)}: test_chrom={test_chrom} not available, can_use_fast=False")
+                logger.debug(f"File {os.path.basename(bw_file)}: test_chrom={test_chrom} not available, can_use_fast=False")
     
     fast_files = [f for f, can_fast in can_use_fast_read.items() if can_fast]
     slow_files = [f for f, can_fast in can_use_fast_read.items() if not can_fast]
     
     if fast_files:
-        logger.info(f"Using fast direct reading for {len(fast_files)} files: {[os.path.basename(f) for f in fast_files]}")
+        logger.info(f"Fast reading enabled for {len(fast_files)}/{len(bw_files)} files")
+        logger.debug(f"Fast reading files: {[os.path.basename(f) for f in fast_files]}")
     if slow_files:
-        logger.info(f"Using stats-based reading for {len(slow_files)} files: {[os.path.basename(f) for f in slow_files]}")
+        logger.info(f"Stats reading required for {len(slow_files)}/{len(bw_files)} files")
+        logger.debug(f"Stats reading files: {[os.path.basename(f) for f in slow_files]}")
+    
+    # Progress tracking
+    total_chroms = len(target_chroms)
+    logger.info(f"Reading data from {total_chroms} chromosomes...")
     
     for chrom_idx, chrom in enumerate(target_chroms):
-        logger.info(f"Processing chromosome {chrom} ({chrom_idx+1}/{len(target_chroms)})")
+        # Simple progress indicator
+        progress_pct = (chrom_idx / total_chroms) * 100
+        logger.info(f"[{progress_pct:5.1f}%] Processing {chrom} ({chrom_idx+1}/{total_chroms})")
         
         # Determine chromosome bounds
         chrom_start = 0
@@ -278,11 +286,10 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
         # Warn if this will create a very large number of intervals AND we're using slow stats reading
         slow_files_for_chrom = [f for f in bw_files if not can_use_fast_read.get(f, False)]
         if len(coords) > 1_000_000 and slow_files_for_chrom:  # 1M intervals AND slow files
-            logger.warning(f"Chromosome {chrom} has {len(coords):,} intervals at {span}bp resolution")
-            logger.warning(f"Will be slow for {len(slow_files_for_chrom)} files using stats reading: {[os.path.basename(f) for f in slow_files_for_chrom]}")
+            logger.warning(f"Chromosome {chrom} has {len(coords):,} intervals - will be slow for {len(slow_files_for_chrom)} files using stats reading")
             logger.warning("Consider using --span with a larger value or --region to limit analysis")
-        elif len(coords) > 1_000_000:
-            logger.info(f"Chromosome {chrom} has {len(coords):,} intervals at {span}bp resolution (fast reading enabled)")
+        
+        logger.debug(f"Chromosome {chrom}: {len(coords):,} intervals at {span}bp resolution")
             
         # Create DataFrame for this chromosome
         chrom_data = {
@@ -303,7 +310,7 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
                 # Use fast or slow method based on pre-computed check
                 if can_use_fast_read.get(bw_file, False):
                     try:
-                        logger.info(f"Using fast interval read for {os.path.basename(bw_file)} on {chrom}")
+                        logger.debug(f"Using fast interval read for {os.path.basename(bw_file)} on {chrom}")
                         # Fast direct reading using intervals
                         intervals = bw.intervals(chrom, chrom_start, chrom_end)
                         if intervals:
@@ -322,7 +329,7 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
                                     values[actual_start:actual_end] = value
                             
                             chrom_data[col_name] = values
-                            logger.info(f"Fast interval read completed for {os.path.basename(bw_file)}: {len(intervals)} intervals processed")
+                            logger.debug(f"Fast interval read completed for {os.path.basename(bw_file)}: {len(intervals)} intervals processed")
                         else:
                             logger.debug(f"No intervals found for {os.path.basename(bw_file)} on {chrom}")
                             chrom_data[col_name] = np.zeros(len(coords))
@@ -341,8 +348,8 @@ def read_bigwig_data(bw_files: List[str], chromosomes: List[str],
                     end_idx = min(start_idx + chunk_size, len(coords))
                     chunk_coords = coords[start_idx:end_idx]
                     
-                    # Progress reporting for large chromosomes
-                    if len(coords) > 500000 and chunk_idx % 10 == 0:
+                    # Progress reporting for large chromosomes (less verbose)
+                    if len(coords) > 1000000 and chunk_idx % 50 == 0:
                         progress = (chunk_idx / num_chunks) * 100
                         logger.info(f"  {os.path.basename(bw_file)}: {progress:.1f}% complete")
                     
