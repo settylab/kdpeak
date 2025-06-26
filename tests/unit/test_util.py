@@ -2,24 +2,25 @@
 Unit tests for kdpeak utility functions.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-import tempfile
 import os
+import tempfile
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from kdpeak.util import (
-    read_bed,
-    events_from_intervals,
     events_dict_from_file,
-    read_chrom_sizes_file,
-    get_chromosome_size_estimate,
+    events_from_intervals,
     filter_chromosomes,
-    sort_chromosomes_by_size,
+    get_chromosome_size_estimate,
     get_kde,
     make_kdes,
+    read_bed,
+    read_chrom_sizes_file,
     setup_logging,
+    sort_chromosomes_by_size,
 )
 
 

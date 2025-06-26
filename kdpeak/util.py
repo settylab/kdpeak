@@ -1,13 +1,14 @@
-from typing import Dict, Optional, List
-import numpy as np
-import pandas as pd
-from KDEpy import FFTKDE
-import pyBigWig
-import multiprocessing
 import logging
+import multiprocessing
 import re
 import sys
 import traceback
+from typing import Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+import pyBigWig
+from KDEpy import FFTKDE
 
 
 def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:

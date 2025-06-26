@@ -2,15 +2,16 @@
 Tests for bwops performance optimizations, specifically fast reading when spans match.
 """
 
-import pytest
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-import tempfile
 import pyBigWig
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+import pytest
 
-from kdpeak.bwops import read_bigwig_data, get_native_resolution
+from kdpeak.bwops import get_native_resolution, read_bigwig_data
 
 
 class TestBigWigFastReading:

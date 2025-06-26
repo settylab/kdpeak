@@ -8,24 +8,23 @@ and writes the result into an output directory. It also allows for specification
 of various parameters like KDE bandwidth, logging levels, sequence blacklist, etc.
 """
 
+import argparse
 import os
 import sys
-import argparse
-
 
 from .util import (
-    events_dict_from_file,
-    make_kdes,
     call_peaks,
-    include_auc,
-    name_peaks,
-    write_bed,
-    write_bigwig,
-    setup_logging,
+    events_dict_from_file,
     handle_error,
+    include_auc,
+    make_kdes,
+    name_peaks,
+    safe_file_operation,
+    setup_logging,
     validate_file_exists,
     validate_output_directory,
-    safe_file_operation,
+    write_bed,
+    write_bigwig,
 )
 
 

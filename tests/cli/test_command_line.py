@@ -2,11 +2,12 @@
 Command-line interface tests for kdpeak and bwops.
 """
 
-import pytest
+import os
 import subprocess
 import tempfile
-import os
 from pathlib import Path
+
+import pytest
 
 
 class TestKDPeakCLI:

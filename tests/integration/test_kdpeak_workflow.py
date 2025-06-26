@@ -2,14 +2,15 @@
 Integration tests for kdpeak main workflow.
 """
 
-import pytest
-import pandas as pd
-import subprocess
 import os
+import subprocess
 from pathlib import Path
 
+import pandas as pd
+import pytest
+
 from kdpeak.core import main as kdpeak_main
-from kdpeak.util import events_dict_from_file, make_kdes, call_peaks
+from kdpeak.util import call_peaks, events_dict_from_file, make_kdes
 
 
 class TestKDPeakWorkflow:
@@ -368,8 +369,9 @@ class TestRealWorldScenarios:
 
     def test_memory_efficiency(self, sample_events_dict):
         """Test memory usage doesn't grow excessively."""
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss

@@ -2,12 +2,13 @@
 pytest configuration and shared fixtures for kdpeak tests.
 """
 
-import pytest
-import tempfile
 import os
-import pandas as pd
-import numpy as np
+import tempfile
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
 
 
 @pytest.fixture

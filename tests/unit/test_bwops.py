@@ -2,22 +2,23 @@
 Unit tests for bwops (BigWig operations) functionality.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-import tempfile
 import json
+import tempfile
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+import pytest
+
 from kdpeak.bwops import (
+    generate_default_formula,
+    get_common_chromosomes,
+    parse_arguments,
     parse_formula,
+    parse_variable_mapping,
     perform_regression,
     read_chrom_sizes,
-    get_common_chromosomes,
     write_output,
-    parse_arguments,
-    parse_variable_mapping,
-    generate_default_formula,
 )
 from kdpeak.util import filter_chromosomes
 

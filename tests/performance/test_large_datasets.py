@@ -2,16 +2,17 @@
 Performance and stress tests for kdpeak with large datasets.
 """
 
-import pytest
-import pandas as pd
-import numpy as np
-import time
-import psutil
 import os
-from pathlib import Path
 import tempfile
+import time
+from pathlib import Path
 
-from kdpeak.util import make_kdes, call_peaks, events_dict_from_file
+import numpy as np
+import pandas as pd
+import psutil
+import pytest
+
+from kdpeak.util import call_peaks, events_dict_from_file, make_kdes
 
 
 class TestPerformance:
@@ -312,8 +313,8 @@ class TestStressTests:
     @pytest.mark.slow
     def test_concurrent_processing(self, sample_events_dict):
         """Test that the package handles concurrent processing safely."""
-        import threading
         import queue
+        import threading
 
         results_queue = queue.Queue()
 

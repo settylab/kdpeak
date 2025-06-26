@@ -10,20 +10,21 @@ Tests comprehensive error handling including:
 - Debug information preservation
 """
 
-import pytest
-import tempfile
+import logging
 import os
 import sys
-import logging
-from unittest.mock import patch, MagicMock
+import tempfile
 from io import StringIO
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Import the modules we're testing
 from kdpeak.util import (
     handle_error,
+    safe_file_operation,
     validate_file_exists,
     validate_output_directory,
-    safe_file_operation,
 )
 
 

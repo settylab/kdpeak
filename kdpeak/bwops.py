@@ -6,27 +6,28 @@ A utility for processing and analyzing BigWig files with mathematical operations
 regression analysis, and multiple output formats.
 """
 
-import os
-import sys
 import argparse
+import json
+import logging
+import os
 import re
+import sys
+from itertools import combinations
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
 import pyBigWig
 from scipy import stats
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import r2_score
-import logging
-from typing import Dict, List, Tuple, Optional, Union
-import json
-from itertools import combinations
 
 from .util import (
-    setup_logging,
     handle_error,
+    safe_file_operation,
+    setup_logging,
     validate_file_exists,
     validate_output_directory,
-    safe_file_operation,
 )
 
 

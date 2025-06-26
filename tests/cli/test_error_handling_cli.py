@@ -9,11 +9,12 @@ Tests command-line interface error scenarios including:
 - Exit code verification
 """
 
-import pytest
-import subprocess
-import tempfile
 import os
+import subprocess
 import sys
+import tempfile
+
+import pytest
 
 
 class TestKdpeakCLIErrorHandling:
