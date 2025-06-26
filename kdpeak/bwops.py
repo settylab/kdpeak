@@ -21,7 +21,13 @@ from typing import Dict, List, Tuple, Optional, Union
 import json
 from itertools import combinations
 
-from .util import setup_logging, handle_error, validate_file_exists, validate_output_directory, safe_file_operation
+from .util import (
+    setup_logging,
+    handle_error,
+    validate_file_exists,
+    validate_output_directory,
+    safe_file_operation,
+)
 
 
 def parse_arguments(args=None):
@@ -44,8 +50,12 @@ def parse_arguments(args=None):
     )
 
     # Multiply operation
-    mult_parser = subparsers.add_parser("multiply", help="Multiply multiple BigWig files")
-    mult_parser.add_argument("input_files", nargs="+", help="Input BigWig files to multiply")
+    mult_parser = subparsers.add_parser(
+        "multiply", help="Multiply multiple BigWig files"
+    )
+    mult_parser.add_argument(
+        "input_files", nargs="+", help="Input BigWig files to multiply"
+    )
     mult_parser.add_argument("--out", required=True, help="Output file")
     mult_parser.add_argument(
         "--format",
@@ -55,7 +65,9 @@ def parse_arguments(args=None):
     )
 
     # Regression operation
-    regress_parser = subparsers.add_parser("regress", help="Perform regression analysis")
+    regress_parser = subparsers.add_parser(
+        "regress", help="Perform regression analysis"
+    )
     regress_parser.add_argument(
         "--formula",
         help='Formula using variable names, e.g., "target ~ pred1 + pred2 + pred1*pred2" (default: auto-generate)',
@@ -72,11 +84,16 @@ def parse_arguments(args=None):
         help='Predictor variables as name=file pairs, e.g., "pred1=file1.bw pred2=file2.bw" or just files (uses a,b,c...)',
     )
     regress_parser.add_argument(
-        "--type", choices=["linear", "logistic"], default="linear", help="Regression type (default: linear)"
+        "--type",
+        choices=["linear", "logistic"],
+        default="linear",
+        help="Regression type (default: linear)",
     )
     regress_parser.add_argument("--out-prediction", help="Output file for predictions")
     regress_parser.add_argument("--out-residuals", help="Output file for residuals")
-    regress_parser.add_argument("--out-stats", help="Output file for detailed statistics")
+    regress_parser.add_argument(
+        "--out-stats", help="Output file for detailed statistics"
+    )
     regress_parser.add_argument(
         "--format",
         choices=["bigwig", "csv", "bed", "tsv", "json"],
@@ -85,9 +102,15 @@ def parse_arguments(args=None):
     )
 
     # Correlation operation
-    corr_parser = subparsers.add_parser("correlate", help="Compute pairwise correlation matrix")
-    corr_parser.add_argument("input_files", nargs="+", help="Input BigWig files for correlation analysis")
-    corr_parser.add_argument("--out", required=True, help="Output file for correlation matrix")
+    corr_parser = subparsers.add_parser(
+        "correlate", help="Compute pairwise correlation matrix"
+    )
+    corr_parser.add_argument(
+        "input_files", nargs="+", help="Input BigWig files for correlation analysis"
+    )
+    corr_parser.add_argument(
+        "--out", required=True, help="Output file for correlation matrix"
+    )
     corr_parser.add_argument(
         "--method",
         choices=["pearson", "spearman", "kendall"],
@@ -107,19 +130,34 @@ def parse_arguments(args=None):
         help="Minimum number of overlapping non-zero values required (default: 1000)",
     )
     corr_parser.add_argument(
-        "--format", choices=["csv", "tsv", "json"], default="csv", help="Output format (default: csv)"
+        "--format",
+        choices=["csv", "tsv", "json"],
+        default="csv",
+        help="Output format (default: csv)",
     )
     corr_parser.add_argument(
-        "--include-stats", action="store_true", help="Include additional statistics (mean, std, coverage)"
+        "--include-stats",
+        action="store_true",
+        help="Include additional statistics (mean, std, coverage)",
     )
-    corr_parser.add_argument("--heatmap", help="Output heatmap plot (requires matplotlib)")
-    corr_parser.add_argument("--scatter-plots", help="Directory for scatter plots of all pairs")
+    corr_parser.add_argument(
+        "--heatmap", help="Output heatmap plot (requires matplotlib)"
+    )
+    corr_parser.add_argument(
+        "--scatter-plots", help="Directory for scatter plots of all pairs"
+    )
 
     # Common arguments for all operations
     for subparser in [add_parser, mult_parser, regress_parser, corr_parser]:
-        subparser.add_argument("--chrom-sizes", help="Chromosome sizes file (required for BigWig output)")
-        subparser.add_argument("--region", help="Limit analysis to genomic region (chr:start-end)")
-        subparser.add_argument("--chromosomes", nargs="+", help="Limit analysis to specific chromosomes")
+        subparser.add_argument(
+            "--chrom-sizes", help="Chromosome sizes file (required for BigWig output)"
+        )
+        subparser.add_argument(
+            "--region", help="Limit analysis to genomic region (chr:start-end)"
+        )
+        subparser.add_argument(
+            "--chromosomes", nargs="+", help="Limit analysis to specific chromosomes"
+        )
         subparser.add_argument(
             "--span",
             type=int,
@@ -129,13 +167,20 @@ def parse_arguments(args=None):
 
         # Chromosome filtering parameters (similar to kdpeak)
         subparser.add_argument(
-            "--blacklisted-seqs", nargs="+", default=[], help="List of sequences to exclude from analysis"
+            "--blacklisted-seqs",
+            nargs="+",
+            default=[],
+            help="List of sequences to exclude from analysis",
         )
         subparser.add_argument(
-            "--exclude-contigs", action="store_true", help="Exclude contigs/scaffolds with common keywords"
+            "--exclude-contigs",
+            action="store_true",
+            help="Exclude contigs/scaffolds with common keywords",
         )
         subparser.add_argument(
-            "--chromosome-pattern", type=str, help="Regex pattern - only include chromosomes matching this pattern"
+            "--chromosome-pattern",
+            type=str,
+            help="Regex pattern - only include chromosomes matching this pattern",
         )
 
         subparser.add_argument(
@@ -200,15 +245,21 @@ def get_common_chromosomes(
     if blacklisted_seqs or exclude_contigs or chromosome_pattern:
         # Filter out blacklisted sequences first
         if blacklisted_seqs:
-            common_chroms = [chrom for chrom in common_chroms if chrom not in blacklisted_seqs]
+            common_chroms = [
+                chrom for chrom in common_chroms if chrom not in blacklisted_seqs
+            ]
 
         # Apply chromosome filtering
-        common_chroms = filter_chromosomes(common_chroms, exclude_contigs, chromosome_pattern)
+        common_chroms = filter_chromosomes(
+            common_chroms, exclude_contigs, chromosome_pattern
+        )
 
     return common_chroms
 
 
-def get_native_resolution(bw_files: List[str], chromosomes: List[str]) -> Tuple[int, bool]:
+def get_native_resolution(
+    bw_files: List[str], chromosomes: List[str]
+) -> Tuple[int, bool]:
     """
     Determine the native resolution of BigWig files to avoid interpolation.
     Returns (resolution, needs_interpolation_warning)
@@ -253,7 +304,9 @@ def get_native_resolution(bw_files: List[str], chromosomes: List[str]) -> Tuple[
                 native_resolution = span_counts.most_common(1)[0][0]
                 file_resolutions[bw_file] = native_resolution
                 all_spans.extend(file_spans)
-                logger.debug(f"Native resolution for {os.path.basename(bw_file)}: {native_resolution} bp")
+                logger.debug(
+                    f"Native resolution for {os.path.basename(bw_file)}: {native_resolution} bp"
+                )
 
     if not all_spans:
         logger.warning("Could not determine native resolution, using default 10 bp")
@@ -274,15 +327,24 @@ def get_native_resolution(bw_files: List[str], chromosomes: List[str]) -> Tuple[
 
         needs_warning = resolution != max(unique_resolutions)
         if needs_warning:
-            logger.warning(f"Files have different native resolutions: {unique_resolutions}")
-            logger.warning(f"Using GCD resolution {resolution} bp - this may require interpolation")
-            logger.warning("For best performance, use BigWig files with matching resolutions")
+            logger.warning(
+                f"Files have different native resolutions: {unique_resolutions}"
+            )
+            logger.warning(
+                f"Using GCD resolution {resolution} bp - this may require interpolation"
+            )
+            logger.warning(
+                "For best performance, use BigWig files with matching resolutions"
+            )
 
     return max(resolution, 1), needs_warning
 
 
 def read_bigwig_data(
-    bw_files: List[str], chromosomes: List[str], span: int, region: Optional[Tuple[str, int, int]] = None
+    bw_files: List[str],
+    chromosomes: List[str],
+    span: int,
+    region: Optional[Tuple[str, int, int]] = None,
 ) -> pd.DataFrame:
     """Read and align data from multiple BigWig files efficiently at native resolution."""
     logger = logging.getLogger()
@@ -300,9 +362,13 @@ def read_bigwig_data(
             # Sample a chromosome to check native resolution
             test_chrom = target_chroms[0] if target_chroms else None
             if test_chrom and test_chrom in bw.chroms():
-                sample_intervals = bw.intervals(test_chrom, 0, min(100000, bw.chroms()[test_chrom]))
+                sample_intervals = bw.intervals(
+                    test_chrom, 0, min(100000, bw.chroms()[test_chrom])
+                )
                 if sample_intervals:
-                    native_spans = {end - start for start, end, _ in sample_intervals[:50]}
+                    native_spans = {
+                        end - start for start, end, _ in sample_intervals[:50]
+                    }
                     # Check if target span is present in the file
                     spans_match = span in native_spans
                     can_use_fast_read[bw_file] = spans_match
@@ -311,7 +377,9 @@ def read_bigwig_data(
                     )
                 else:
                     can_use_fast_read[bw_file] = False
-                    logger.debug(f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False")
+                    logger.debug(
+                        f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False"
+                    )
             else:
                 can_use_fast_read[bw_file] = False
                 logger.debug(
@@ -325,8 +393,12 @@ def read_bigwig_data(
         logger.info(f"Fast reading enabled for {len(fast_files)}/{len(bw_files)} files")
         logger.debug(f"Fast reading files: {[os.path.basename(f) for f in fast_files]}")
     if slow_files:
-        logger.info(f"Stats reading required for {len(slow_files)}/{len(bw_files)} files")
-        logger.debug(f"Stats reading files: {[os.path.basename(f) for f in slow_files]}")
+        logger.info(
+            f"Stats reading required for {len(slow_files)}/{len(bw_files)} files"
+        )
+        logger.debug(
+            f"Stats reading files: {[os.path.basename(f) for f in slow_files]}"
+        )
 
     # Progress tracking
     total_chroms = len(target_chroms)
@@ -335,7 +407,9 @@ def read_bigwig_data(
     for chrom_idx, chrom in enumerate(target_chroms):
         # Simple progress indicator
         progress_pct = (chrom_idx / total_chroms) * 100
-        logger.info(f"[{progress_pct:5.1f}%] Processing {chrom} ({chrom_idx+1}/{total_chroms})")
+        logger.info(
+            f"[{progress_pct:5.1f}%] Processing {chrom} ({chrom_idx+1}/{total_chroms})"
+        )
 
         # Determine chromosome bounds
         chrom_start = 0
@@ -360,14 +434,22 @@ def read_bigwig_data(
             continue
 
         # Warn if this will create a very large number of intervals AND we're using slow stats reading
-        slow_files_for_chrom = [f for f in bw_files if not can_use_fast_read.get(f, False)]
-        if len(coords) > 1_000_000 and slow_files_for_chrom:  # 1M intervals AND slow files
+        slow_files_for_chrom = [
+            f for f in bw_files if not can_use_fast_read.get(f, False)
+        ]
+        if (
+            len(coords) > 1_000_000 and slow_files_for_chrom
+        ):  # 1M intervals AND slow files
             logger.warning(
                 f"Chromosome {chrom} has {len(coords):,} intervals - will be slow for {len(slow_files_for_chrom)} files using stats reading"
             )
-            logger.warning("Consider using --span with a larger value or --region to limit analysis")
+            logger.warning(
+                "Consider using --span with a larger value or --region to limit analysis"
+            )
 
-        logger.debug(f"Chromosome {chrom}: {len(coords):,} intervals at {span}bp resolution")
+        logger.debug(
+            f"Chromosome {chrom}: {len(coords):,} intervals at {span}bp resolution"
+        )
 
         # Create DataFrame for this chromosome
         chrom_data = {"chromosome": chrom, "start": coords, "end": coords + span}
@@ -384,7 +466,9 @@ def read_bigwig_data(
                 # Use fast or slow method based on pre-computed check
                 if can_use_fast_read.get(bw_file, False):
                     try:
-                        logger.debug(f"Using fast interval read for {os.path.basename(bw_file)} on {chrom}")
+                        logger.debug(
+                            f"Using fast interval read for {os.path.basename(bw_file)} on {chrom}"
+                        )
                         # Fast direct reading using intervals
                         intervals = bw.intervals(chrom, chrom_start, chrom_end)
                         if intervals:
@@ -394,7 +478,9 @@ def read_bigwig_data(
                             for start, end, value in intervals:
                                 # Find overlapping coordinates
                                 start_idx = max(0, (start - chrom_start) // span)
-                                end_idx = min(len(coords), (end - chrom_start) // span + 1)
+                                end_idx = min(
+                                    len(coords), (end - chrom_start) // span + 1
+                                )
 
                                 # Fill the overlapping range
                                 if start_idx < len(coords) and end_idx > 0:
@@ -407,7 +493,9 @@ def read_bigwig_data(
                                 f"Fast interval read completed for {os.path.basename(bw_file)}: {len(intervals)} intervals processed"
                             )
                         else:
-                            logger.debug(f"No intervals found for {os.path.basename(bw_file)} on {chrom}")
+                            logger.debug(
+                                f"No intervals found for {os.path.basename(bw_file)} on {chrom}"
+                            )
                             chrom_data[col_name] = np.zeros(len(coords))
                         continue  # Skip stats method
                     except Exception as e:
@@ -429,7 +517,9 @@ def read_bigwig_data(
                     # Progress reporting for large chromosomes (less verbose)
                     if len(coords) > 1000000 and chunk_idx % 50 == 0:
                         progress = (chunk_idx / num_chunks) * 100
-                        logger.info(f"  {os.path.basename(bw_file)}: {progress:.1f}% complete")
+                        logger.info(
+                            f"  {os.path.basename(bw_file)}: {progress:.1f}% complete"
+                        )
 
                     # Process chunk
                     chunk_values = []
@@ -455,7 +545,9 @@ def read_bigwig_data(
     return pd.concat(all_data, ignore_index=True)
 
 
-def parse_variable_mapping(target_arg: str, predictors_args: List[str]) -> Tuple[Dict[str, str], str, List[str]]:
+def parse_variable_mapping(
+    target_arg: str, predictors_args: List[str]
+) -> Tuple[Dict[str, str], str, List[str]]:
     """
     Parse target and predictor arguments to create variable name to file mapping.
 
@@ -488,7 +580,11 @@ def parse_variable_mapping(target_arg: str, predictors_args: List[str]) -> Tuple
             pred_var = pred_var.strip()
             pred_file = pred_file.strip()
         else:
-            pred_var = default_names[default_idx] if default_idx < len(default_names) else f"pred{default_idx}"
+            pred_var = (
+                default_names[default_idx]
+                if default_idx < len(default_names)
+                else f"pred{default_idx}"
+            )
             pred_file = pred_arg.strip()
             default_idx += 1
 
@@ -524,7 +620,10 @@ def parse_formula(formula: str) -> Tuple[str, List[str]]:
 
 
 def perform_regression(
-    data: pd.DataFrame, formula: str, regression_type: str = "linear", var_mapping: Dict[str, str] = None
+    data: pd.DataFrame,
+    formula: str,
+    regression_type: str = "linear",
+    var_mapping: Dict[str, str] = None,
 ) -> Dict:
     """Perform regression analysis on the data using variable mapping."""
     logger = logging.getLogger()
@@ -542,7 +641,9 @@ def perform_regression(
         for var_name in [target_var] + predictor_terms:
             # Extract base variable name (remove interaction symbols)
             base_var = re.sub(r"[*:].*", "", var_name.strip())
-            var_basename = os.path.basename(base_var).replace(".bw", "").replace(".bigwig", "")
+            var_basename = (
+                os.path.basename(base_var).replace(".bw", "").replace(".bigwig", "")
+            )
 
             for col in file_columns:
                 if var_basename in col:
@@ -552,7 +653,9 @@ def perform_regression(
         # Use provided variable mapping to find columns
         var_to_col = {}
         for var_name, file_path in var_mapping.items():
-            file_basename = os.path.basename(file_path).replace(".bw", "").replace(".bigwig", "")
+            file_basename = (
+                os.path.basename(file_path).replace(".bw", "").replace(".bigwig", "")
+            )
 
             # Find the column that corresponds to this file
             for col in file_columns:
@@ -561,11 +664,15 @@ def perform_regression(
                     break
 
             if var_name not in var_to_col:
-                raise ValueError(f"Could not find data column for variable '{var_name}' (file: {file_path})")
+                raise ValueError(
+                    f"Could not find data column for variable '{var_name}' (file: {file_path})"
+                )
 
     # Find target column
     if target_var not in var_to_col:
-        raise ValueError(f"Target variable '{target_var}' not found in variable mapping")
+        raise ValueError(
+            f"Target variable '{target_var}' not found in variable mapping"
+        )
     target_col = var_to_col[target_var]
 
     # Build design matrix
@@ -580,7 +687,9 @@ def perform_regression(
 
             for factor in factors:
                 if factor not in var_to_col:
-                    raise ValueError(f"Predictor variable '{factor}' not found in variable mapping")
+                    raise ValueError(
+                        f"Predictor variable '{factor}' not found in variable mapping"
+                    )
                 factor_cols.append(var_to_col[factor])
 
             # Create interaction column
@@ -597,7 +706,9 @@ def perform_regression(
             # Simple term
             term_clean = term.strip()
             if term_clean not in var_to_col:
-                raise ValueError(f"Predictor variable '{term_clean}' not found in variable mapping")
+                raise ValueError(
+                    f"Predictor variable '{term_clean}' not found in variable mapping"
+                )
 
             X_cols.append(data[var_to_col[term_clean]])
             X_names.append(term_clean)
@@ -642,7 +753,9 @@ def perform_regression(
             t_stats = model.coef_ / se_coef
             p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), n - p - 1))
         except np.linalg.LinAlgError:
-            logger.warning("Singular matrix encountered - cannot compute p-values (likely due to multicollinearity)")
+            logger.warning(
+                "Singular matrix encountered - cannot compute p-values (likely due to multicollinearity)"
+            )
             p_values = np.full(len(model.coef_), np.nan)
 
         results = {
@@ -680,7 +793,11 @@ def perform_regression(
 
 
 def write_output(
-    data: pd.DataFrame, output_file: str, format_type: str, chrom_sizes: Optional[Dict[str, int]] = None, span: int = 10
+    data: pd.DataFrame,
+    output_file: str,
+    format_type: str,
+    chrom_sizes: Optional[Dict[str, int]] = None,
+    span: int = 10,
 ):
     """Write data to specified output format."""
     logger = logging.getLogger()
@@ -707,10 +824,14 @@ def write_output(
     logger.info(f"Output written to {output_file}")
 
 
-def write_bigwig_output(data: pd.DataFrame, output_file: str, chrom_sizes: Dict[str, int], span: int):
+def write_bigwig_output(
+    data: pd.DataFrame, output_file: str, chrom_sizes: Dict[str, int], span: int
+):
     """Write data to BigWig format."""
     # Assume the last column contains the values to write
-    value_col = [col for col in data.columns if col not in ["chromosome", "start", "end"]][-1]
+    value_col = [
+        col for col in data.columns if col not in ["chromosome", "start", "end"]
+    ][-1]
 
     with pyBigWig.open(output_file, "w") as bw:
         bw.addHeader(list(sorted(chrom_sizes.items())))
@@ -720,7 +841,11 @@ def write_bigwig_output(data: pd.DataFrame, output_file: str, chrom_sizes: Dict[
                 continue
 
             bw.addEntries(
-                chrom, int(chrom_data["start"].min()), span=span, step=span, values=chrom_data[value_col].values
+                chrom,
+                int(chrom_data["start"].min()),
+                span=span,
+                step=span,
+                values=chrom_data[value_col].values,
             )
 
 
@@ -772,7 +897,9 @@ def compute_correlation_matrix(
         stats_dict[name] = {
             "mean": float(np.mean(values)),
             "std": float(np.std(values)),
-            "mean_nonzero": float(np.mean(values[non_zero_mask])) if non_zero_mask.any() else 0.0,
+            "mean_nonzero": (
+                float(np.mean(values[non_zero_mask])) if non_zero_mask.any() else 0.0
+            ),
             "coverage": float(np.sum(non_zero_mask) / len(values)),
             "n_points": len(values),
             "n_nonzero": int(np.sum(non_zero_mask)),
@@ -794,7 +921,9 @@ def compute_correlation_matrix(
         x_clean, y_clean = x[mask], y[mask]
 
         if len(x_clean) < min_overlap:
-            logger.warning(f"Insufficient overlap between {name1} and {name2}: {len(x_clean)} < {min_overlap}")
+            logger.warning(
+                f"Insufficient overlap between {name1} and {name2}: {len(x_clean)} < {min_overlap}"
+            )
             corr_matrix.loc[name1, name2] = np.nan
             corr_matrix.loc[name2, name1] = np.nan
             continue
@@ -813,10 +942,14 @@ def compute_correlation_matrix(
             corr_matrix.loc[name1, name2] = corr_coef
             corr_matrix.loc[name2, name1] = corr_coef
 
-            logger.debug(f"{name1} vs {name2}: r={corr_coef:.3f}, p={p_value:.2e}, n={len(x_clean)}")
+            logger.debug(
+                f"{name1} vs {name2}: r={corr_coef:.3f}, p={p_value:.2e}, n={len(x_clean)}"
+            )
 
         except Exception as e:
-            logger.warning(f"Failed to compute correlation between {name1} and {name2}: {e}")
+            logger.warning(
+                f"Failed to compute correlation between {name1} and {name2}: {e}"
+            )
             corr_matrix.loc[name1, name2] = np.nan
             corr_matrix.loc[name2, name1] = np.nan
 
@@ -846,7 +979,9 @@ def compute_per_chromosome_correlations(
     logger = logging.getLogger()
 
     chromosomes = data["chromosome"].unique()
-    logger.info(f"Computing per-chromosome correlations for {len(chromosomes)} chromosomes")
+    logger.info(
+        f"Computing per-chromosome correlations for {len(chromosomes)} chromosomes"
+    )
 
     results = {}
     for chrom in chromosomes:
@@ -854,7 +989,9 @@ def compute_per_chromosome_correlations(
         chrom_data = data[data["chromosome"] == chrom].copy()
 
         try:
-            corr_matrix, stats_dict = compute_correlation_matrix(chrom_data, method=method, min_overlap=min_overlap)
+            corr_matrix, stats_dict = compute_correlation_matrix(
+                chrom_data, method=method, min_overlap=min_overlap
+            )
             results[chrom] = (corr_matrix, stats_dict)
         except Exception as e:
             logger.warning(f"Failed to compute correlations for {chrom}: {e}")
@@ -897,7 +1034,9 @@ def write_correlation_output(
     logger.info(f"Correlation matrix written to {output_file}")
 
 
-def create_correlation_heatmap(corr_matrix: pd.DataFrame, output_file: str, method: str = "pearson"):
+def create_correlation_heatmap(
+    corr_matrix: pd.DataFrame, output_file: str, method: str = "pearson"
+):
     """Create a heatmap visualization of the correlation matrix."""
     try:
         import matplotlib.pyplot as plt
@@ -936,7 +1075,9 @@ def create_scatter_plots(data: pd.DataFrame, output_dir: str, method: str = "pea
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        raise ImportError("matplotlib is required for scatter plot generation. Install with: pip install matplotlib")
+        raise ImportError(
+            "matplotlib is required for scatter plot generation. Install with: pip install matplotlib"
+        )
 
     logger = logging.getLogger()
     os.makedirs(output_dir, exist_ok=True)
@@ -1053,7 +1194,9 @@ def main():
 
         # Read chromosome sizes if needed
         chrom_sizes = None
-        if args.format == "bigwig" or any(getattr(args, attr, None) and attr.startswith("out_") for attr in vars(args)):
+        if args.format == "bigwig" or any(
+            getattr(args, attr, None) and attr.startswith("out_") for attr in vars(args)
+        ):
             if not args.chrom_sizes:
                 handle_error(
                     ValueError("Chromosome sizes file required for BigWig output"),
@@ -1102,7 +1245,9 @@ def main():
             input_files = args.input_files
         elif args.operation == "regress":
             # Parse variable mappings from target and predictors arguments
-            var_mapping, target_var, predictor_vars = parse_variable_mapping(args.target, args.predictors)
+            var_mapping, target_var, predictor_vars = parse_variable_mapping(
+                args.target, args.predictors
+            )
 
             # Generate default formula if not provided
             if not args.formula:
@@ -1114,7 +1259,10 @@ def main():
 
         # Find common chromosomes with filtering
         common_chroms = get_common_chromosomes(
-            input_files, args.blacklisted_seqs, args.exclude_contigs, args.chromosome_pattern
+            input_files,
+            args.blacklisted_seqs,
+            args.exclude_contigs,
+            args.chromosome_pattern,
         )
 
         # Apply additional chromosome selection if specified
@@ -1129,31 +1277,45 @@ def main():
         if len(common_chroms) <= 5:
             logger.info(f"Processing {len(common_chroms)} chromosomes: {common_chroms}")
         else:
-            logger.info(f"Processing {len(common_chroms)} chromosomes (showing first 5): {common_chroms[:5]}...")
+            logger.info(
+                f"Processing {len(common_chroms)} chromosomes (showing first 5): {common_chroms[:5]}..."
+            )
 
         # Determine span using native resolution to avoid interpolation
         if hasattr(args, "span") and args.span is not None:
             span = args.span
             logger.info(f"Using user-specified span: {span} bp")
             if span < 1000:
-                logger.warning("Small span values may result in slow processing for large chromosomes")
+                logger.warning(
+                    "Small span values may result in slow processing for large chromosomes"
+                )
         else:
             span, needs_warning = get_native_resolution(input_files, common_chroms)
             if needs_warning:
-                logger.warning("Consider using BigWig files with matching resolutions for optimal performance")
+                logger.warning(
+                    "Consider using BigWig files with matching resolutions for optimal performance"
+                )
             else:
-                logger.info(f"Using native resolution: {span} bp (no interpolation needed)")
+                logger.info(
+                    f"Using native resolution: {span} bp (no interpolation needed)"
+                )
 
             # Suggest larger span for performance if native resolution is very small
             if span < 50:
-                total_genome_size = sum(250_000_000 for _ in common_chroms)  # Rough estimate
+                total_genome_size = sum(
+                    250_000_000 for _ in common_chroms
+                )  # Rough estimate
                 estimated_intervals = total_genome_size // span
                 if estimated_intervals > 10_000_000:  # 10M intervals
                     logger.warning(
                         f"Native resolution of {span}bp will create ~{estimated_intervals//1_000_000}M intervals"
                     )
-                    logger.warning("For faster processing, consider using --span 1000 or larger")
-                    logger.warning("This will require interpolation but may complete much faster")
+                    logger.warning(
+                        "For faster processing, consider using --span 1000 or larger"
+                    )
+                    logger.warning(
+                        "This will require interpolation but may complete much faster"
+                    )
 
         # Read data
         logger.info("Reading BigWig data...")
@@ -1169,12 +1331,24 @@ def main():
         if args.operation == "add":
             value_cols = [col for col in data.columns if col.startswith("bw_")]
             data["result"] = data[value_cols].sum(axis=1)
-            write_output(data[["chromosome", "start", "end", "result"]], args.out, args.format, chrom_sizes, span)
+            write_output(
+                data[["chromosome", "start", "end", "result"]],
+                args.out,
+                args.format,
+                chrom_sizes,
+                span,
+            )
 
         elif args.operation == "multiply":
             value_cols = [col for col in data.columns if col.startswith("bw_")]
             data["result"] = data[value_cols].prod(axis=1)
-            write_output(data[["chromosome", "start", "end", "result"]], args.out, args.format, chrom_sizes, span)
+            write_output(
+                data[["chromosome", "start", "end", "result"]],
+                args.out,
+                args.format,
+                chrom_sizes,
+                span,
+            )
 
         elif args.operation == "regress":
             logger.info("Performing regression analysis...")
@@ -1197,7 +1371,9 @@ def main():
             for name, coef in zip(results["variable_names"], results["coefficients"]):
                 if args.type == "linear" and "p_values" in results:
                     pval_idx = results["variable_names"].index(name)
-                    print(f"  {name}: {coef:.4f} (p-value: {results['p_values'][pval_idx]:.4f})")
+                    print(
+                        f"  {name}: {coef:.4f} (p-value: {results['p_values'][pval_idx]:.4f})"
+                    )
                 else:
                     print(f"  {name}: {coef:.4f}")
 
@@ -1234,7 +1410,10 @@ def main():
                     "n_observations": results["n_obs"],
                     "intercept": float(results["intercept"]),
                     "coefficients": {
-                        name: float(coef) for name, coef in zip(results["variable_names"], results["coefficients"])
+                        name: float(coef)
+                        for name, coef in zip(
+                            results["variable_names"], results["coefficients"]
+                        )
                     },
                 }
 
@@ -1242,7 +1421,10 @@ def main():
                     stats_dict["r_squared"] = float(results["r2"])
                     stats_dict["mse"] = float(results["mse"])
                     stats_dict["p_values"] = {
-                        name: float(pval) for name, pval in zip(results["variable_names"], results["p_values"])
+                        name: float(pval)
+                        for name, pval in zip(
+                            results["variable_names"], results["p_values"]
+                        )
                     }
 
                 with open(args.out_stats, "w") as f:
@@ -1271,7 +1453,12 @@ def main():
 
                 # Write output
                 write_correlation_output(
-                    corr_matrix, stats_dict, args.out, args.format, args.include_stats, args.method
+                    corr_matrix,
+                    stats_dict,
+                    args.out,
+                    args.format,
+                    args.include_stats,
+                    args.method,
                 )
 
             elif args.scope == "per-chromosome":
@@ -1292,7 +1479,12 @@ def main():
                     if corr_matrix is not None:
                         chrom_output = args.out.replace(".", f"_{chrom}.")
                         write_correlation_output(
-                            corr_matrix, stats_dict, chrom_output, args.format, args.include_stats, args.method
+                            corr_matrix,
+                            stats_dict,
+                            chrom_output,
+                            args.format,
+                            args.include_stats,
+                            args.method,
                         )
                         print(f"\n{chrom}:")
                         print(corr_matrix.round(3))
@@ -1302,7 +1494,9 @@ def main():
                 if args.scope == "global":
                     create_correlation_heatmap(corr_matrix, args.heatmap, args.method)
                 else:
-                    logger.warning("Heatmap generation only supported for global correlations")
+                    logger.warning(
+                        "Heatmap generation only supported for global correlations"
+                    )
 
             if args.scatter_plots:
                 create_scatter_plots(data, args.scatter_plots, args.method)

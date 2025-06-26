@@ -36,7 +36,12 @@ def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
 
     # Configure logging
     logging.basicConfig(
-        level=level, filename=log_file, format=log_format, filemode="w", datefmt="%Y-%m-%d %H:%M:%S", force=True
+        level=level,
+        filename=log_file,
+        format=log_format,
+        filemode="w",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
     )
 
     # Return the root logger with the correct level set
@@ -117,7 +122,9 @@ def validate_file_exists(file_path: str, file_type: str = "file") -> None:
         raise FileNotFoundError(f"'{file_path}' exists but is not a file")
 
     if not os.access(file_path, os.R_OK):
-        raise PermissionError(f"The {file_type} '{file_path}' exists but cannot be read (permission denied)")
+        raise PermissionError(
+            f"The {file_type} '{file_path}' exists but cannot be read (permission denied)"
+        )
 
 
 def validate_output_directory(file_path: str) -> None:
@@ -142,7 +149,9 @@ def validate_output_directory(file_path: str) -> None:
         raise PermissionError(f"Output directory '{output_dir}' does not exist")
 
     if not os.access(output_dir, os.W_OK):
-        raise PermissionError(f"Cannot write to output directory '{output_dir}' (permission denied)")
+        raise PermissionError(
+            f"Cannot write to output directory '{output_dir}' (permission denied)"
+        )
 
 
 def safe_file_operation(operation_func, context: str, suggestions: list = None):
@@ -246,9 +255,13 @@ def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame
 
     # Check for extremely large coordinates (potential corruption)
     max_reasonable_coord = 300_000_000  # Larger than human genome
-    huge_coords = (bed_content["start"] > max_reasonable_coord) | (bed_content["end"] > max_reasonable_coord)
+    huge_coords = (bed_content["start"] > max_reasonable_coord) | (
+        bed_content["end"] > max_reasonable_coord
+    )
     if huge_coords.sum() > 0:
-        issues_found.append(f"{huge_coords.sum()} rows with unreasonably large coordinates")
+        issues_found.append(
+            f"{huge_coords.sum()} rows with unreasonably large coordinates"
+        )
         bed_content = bed_content[~huge_coords]
 
     # Check for empty chromosome names
@@ -259,16 +272,24 @@ def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame
 
     # Check for suspicious chromosome names (likely from interleaved lines)
     suspicious_chroms = bed_content["seqname"].str.len() > 30  # Very long names
-    suspicious_chroms |= bed_content["seqname"].str.contains(r"chr.*chr", regex=True, na=False)  # Double chr
-    suspicious_chroms |= bed_content["seqname"].str.contains(r"[ATCG]{4,}", regex=True, na=False)  # DNA sequences
+    suspicious_chroms |= bed_content["seqname"].str.contains(
+        r"chr.*chr", regex=True, na=False
+    )  # Double chr
+    suspicious_chroms |= bed_content["seqname"].str.contains(
+        r"[ATCG]{4,}", regex=True, na=False
+    )  # DNA sequences
     suspicious_chroms |= bed_content["seqname"].str.contains(
         r"_.*_.*_", regex=True, na=False
     )  # Multiple underscores (cell barcodes)
     if suspicious_chroms.sum() > 0:
-        issues_found.append(f"{suspicious_chroms.sum()} rows with suspicious chromosome names")
+        issues_found.append(
+            f"{suspicious_chroms.sum()} rows with suspicious chromosome names"
+        )
         # Log some examples
         suspicious_examples = bed_content[suspicious_chroms]["seqname"].head(5).tolist()
-        logger.warning(f"Examples of suspicious chromosome names: {suspicious_examples}")
+        logger.warning(
+            f"Examples of suspicious chromosome names: {suspicious_examples}"
+        )
         bed_content = bed_content[~suspicious_chroms]
 
     final_count = len(bed_content)
@@ -278,16 +299,22 @@ def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame
         logger.warning(f"Data validation issues found in {file_path}:")
         for issue in issues_found:
             logger.warning(f"  - {issue}")
-        logger.warning(f"Removed {removed_count} problematic rows ({removed_count/original_count:.1%})")
+        logger.warning(
+            f"Removed {removed_count} problematic rows ({removed_count/original_count:.1%})"
+        )
 
         if removed_count / original_count > 0.1:  # More than 10% removed
             logger.error(
                 f"High proportion of invalid data ({removed_count/original_count:.1%}) suggests file corruption"
             )
-            logger.error("This may be caused by interleaved writes from parallel processes")
+            logger.error(
+                "This may be caused by interleaved writes from parallel processes"
+            )
 
     if final_count == 0:
-        raise ValueError(f"No valid intervals remain after data validation in {file_path}")
+        raise ValueError(
+            f"No valid intervals remain after data validation in {file_path}"
+        )
 
     return bed_content
 
@@ -361,7 +388,9 @@ def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
     bed_df.to_csv(out_path, sep="\t", header=False, index=False)
 
 
-def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: int) -> None:
+def write_bigwig(
+    comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: int
+) -> None:
     """
     Write a BigWig file from a pandas DataFrame containing genomic data.
 
@@ -403,19 +432,27 @@ def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: 
     all_seqs = comb_data["seqname"].unique()
     missing_seqs = [seq for seq in all_seqs if seq not in chrom_sizes]
     if missing_seqs:
-        logger.warning(f"Sequences {missing_seqs} are missing in the chromosome sizes file and will be skipped")
-        logger.warning("This may indicate corrupted chromosome names from parallel processing")
+        logger.warning(
+            f"Sequences {missing_seqs} are missing in the chromosome sizes file and will be skipped"
+        )
+        logger.warning(
+            "This may indicate corrupted chromosome names from parallel processing"
+        )
         # Filter out missing sequences instead of failing
         comb_data = comb_data[comb_data["seqname"].isin(chrom_sizes.keys())]
         if comb_data.empty:
-            raise ValueError("No valid sequences remain after filtering missing chromosomes")
+            raise ValueError(
+                "No valid sequences remain after filtering missing chromosomes"
+            )
 
     with pyBigWig.open(out_path, "w") as bw:
         bw.addHeader(list(sorted(chrom_sizes.items())))
 
         for seqname, data in comb_data.groupby("seqname"):
             if seqname not in chrom_sizes:
-                logger.warning(f"Skipping sequence {seqname} not found in chromosome sizes")
+                logger.warning(
+                    f"Skipping sequence {seqname} not found in chromosome sizes"
+                )
                 continue
 
             # Ensure no negative locations and locations do not exceed chromosome size
@@ -489,7 +526,9 @@ def events_dict_from_file(file: str) -> Dict[str, pd.DataFrame]:
         return dict()
 
     events = events_from_intervals(df)
-    events_by_seqname = {seqname: seq_events for seqname, seq_events in events.groupby("seqname")}
+    events_by_seqname = {
+        seqname: seq_events for seqname, seq_events in events.groupby("seqname")
+    }
 
     return events_by_seqname
 
@@ -524,7 +563,9 @@ def full_kde_grid(x, xmin=None, xmax=None):
     return grid
 
 
-def get_kde(cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None):
+def get_kde(
+    cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None
+):
     """
     Estimates the KDE of the given data points with memory protection.
 
@@ -559,7 +600,9 @@ def get_kde(cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, 
 
     # Check for memory issues with very large grids
     if len(grid) > 10_000_000:  # 10M points
-        logger.warning(f"Very large KDE grid ({len(grid)} points) may cause memory issues")
+        logger.warning(
+            f"Very large KDE grid ({len(grid)} points) may cause memory issues"
+        )
         logger.warning("Consider increasing --span parameter to reduce resolution")
 
     try:
@@ -596,7 +639,9 @@ def read_chrom_sizes_file(chrom_sizes_file: str) -> Dict[str, int]:
                     parts = line.split("\t")
                     if len(parts) >= 2:
                         chrom_sizes[parts[0]] = int(parts[1])
-        logger.info(f"Read sizes for {len(chrom_sizes)} chromosomes from {chrom_sizes_file}")
+        logger.info(
+            f"Read sizes for {len(chrom_sizes)} chromosomes from {chrom_sizes_file}"
+        )
     except Exception as e:
         logger.warning(f"Could not read chromosome sizes file {chrom_sizes_file}: {e}")
 
@@ -623,7 +668,9 @@ def get_chromosome_size_estimate(events_df: pd.DataFrame) -> int:
 
 
 def filter_chromosomes(
-    chromosome_list: List[str], exclude_contigs: bool = False, chromosome_pattern: Optional[str] = None
+    chromosome_list: List[str],
+    exclude_contigs: bool = False,
+    chromosome_pattern: Optional[str] = None,
 ) -> List[str]:
     """
     Filter chromosome list based on exclusion rules and pattern matching.
@@ -679,12 +726,18 @@ def filter_chromosomes(
         try:
             pattern = re.compile(chromosome_pattern)
             before_count = len(filtered_chroms)
-            filtered_chroms = [chrom for chrom in filtered_chroms if pattern.match(chrom)]
+            filtered_chroms = [
+                chrom for chrom in filtered_chroms if pattern.match(chrom)
+            ]
             excluded_count = before_count - len(filtered_chroms)
 
             if excluded_count > 0:
-                logger.info(f"Pattern '{chromosome_pattern}' excluded {excluded_count} chromosomes")
-                logger.debug(f"Matching chromosomes: {', '.join(sorted(filtered_chroms))}")
+                logger.info(
+                    f"Pattern '{chromosome_pattern}' excluded {excluded_count} chromosomes"
+                )
+                logger.debug(
+                    f"Matching chromosomes: {', '.join(sorted(filtered_chroms))}"
+                )
 
         except re.error as e:
             logger.error(f"Invalid regex pattern '{chromosome_pattern}': {e}")
@@ -729,7 +782,9 @@ def sort_chromosomes_by_size(
 
     # Apply filtering
     filtered_chroms = filter_chromosomes(
-        all_chroms, exclude_contigs=exclude_contigs, chromosome_pattern=chromosome_pattern
+        all_chroms,
+        exclude_contigs=exclude_contigs,
+        chromosome_pattern=chromosome_pattern,
     )
 
     if not filtered_chroms:
@@ -761,7 +816,9 @@ def sort_chromosomes_by_size(
     # Log the sorting approach used
     if actual_chrom_sizes:
         found_actual = sum(1 for name, _ in sorted_chroms if name in actual_chrom_sizes)
-        logger.info(f"Sorted chromosomes using actual sizes for {found_actual}/{len(sorted_chroms)} chromosomes")
+        logger.info(
+            f"Sorted chromosomes using actual sizes for {found_actual}/{len(sorted_chroms)} chromosomes"
+        )
     else:
         logger.info("Sorted chromosomes using size estimates from data")
 
@@ -830,7 +887,9 @@ def make_kdes(
 
     # Log the processing order for the first few chromosomes
     preview_chroms = sorted_sequences[: min(5, ntotal)]
-    logger.info(f"Processing order (first {len(preview_chroms)}): {', '.join(preview_chroms)}")
+    logger.info(
+        f"Processing order (first {len(preview_chroms)}): {', '.join(preview_chroms)}"
+    )
 
     for i, seqname in enumerate(sorted_sequences):
         logger.info(f"Making KDE of {seqname} [{i+1}/{ntotal}].")
@@ -917,7 +976,9 @@ def track_to_interval(job):
 
     # Handle case where no peaks are found
     if peak_location_df.empty:
-        return pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
+        return pd.DataFrame(
+            columns=["seqname", "start", "end", "mean", "summit", "summit_height"]
+        )
 
     summit_locations = peak_location_df.groupby("peak_name")["density"].idxmax()
     summit_heights = peak_location_df.loc[summit_locations, "density"]
@@ -958,7 +1019,10 @@ def tracks_to_intervals(comb_data, step_size):
         DataFrame with all peak intervals.
     """
     peaks_list = list()
-    jobs = [(loc_comb_data, step_size, seqname) for seqname, loc_comb_data in comb_data.groupby("seqname")]
+    jobs = [
+        (loc_comb_data, step_size, seqname)
+        for seqname, loc_comb_data in comb_data.groupby("seqname")
+    ]
     with multiprocessing.Pool() as pool:
         for peaks in pool.imap(track_to_interval, jobs, 10):
             peaks_list.append(peaks)
@@ -967,7 +1031,9 @@ def tracks_to_intervals(comb_data, step_size):
 
     if not non_empty_peaks:
         # Handle case where no peaks are found in any chromosome
-        empty_peaks = pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
+        empty_peaks = pd.DataFrame(
+            columns=["seqname", "start", "end", "mean", "summit", "summit_height"]
+        )
         empty_peaks["length"] = pd.Series([], dtype=int)
         return empty_peaks
 

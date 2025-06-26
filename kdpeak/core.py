@@ -37,9 +37,7 @@ def parse_arguments():
     -------
     Parsed command line arguments.
     """
-    desc = (
-        "A script that uses kernel density estimation (KDE) to identify genomic peaks from bed-formatted genomic reads."
-    )
+    desc = "A script that uses kernel density estimation (KDE) to identify genomic peaks from bed-formatted genomic reads."
     parser = argparse.ArgumentParser(description=desc)
 
     parser.add_argument(
@@ -341,11 +339,19 @@ def main():
                 bed_summits = bed.copy()
                 bed_summits["start"] = bed_summits["summit"]
                 bed_summits["end"] = bed_summits["summit"] + 1
-                write_bed(bed_summits[["seqname", "start", "end", "name", "summit_height"]], args.summits_out)
+                write_bed(
+                    bed_summits[["seqname", "start", "end", "name", "summit_height"]],
+                    args.summits_out,
+                )
                 return True  # Return success indicator
 
             logger.info("Writing summits to %s...", args.summits_out)
-            if safe_file_operation(write_summits, f"Failed to write summits to {args.summits_out}") is None:
+            if (
+                safe_file_operation(
+                    write_summits, f"Failed to write summits to {args.summits_out}"
+                )
+                is None
+            ):
                 return 1
 
         if args.density_out:
@@ -362,7 +368,12 @@ def main():
                 return 1
 
             def write_density():
-                write_bigwig(comb_data, args.density_out, sizes_file=args.chrom_sizes, span=args.span)
+                write_bigwig(
+                    comb_data,
+                    args.density_out,
+                    sizes_file=args.chrom_sizes,
+                    span=args.span,
+                )
                 return True  # Return success indicator
 
             logger.info("Writing density to %s...", args.density_out)
