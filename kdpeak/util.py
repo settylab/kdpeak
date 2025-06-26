@@ -28,15 +28,17 @@ def setup_logging(log_level="INFO", log_file=None) -> logging.Logger:
     """
     level = getattr(logging, log_level)
     log_format = "[%(asctime)s] [%(levelname)-8s] %(message)s"
-    
+
     # Clear existing handlers to allow reconfiguration
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
-    
+
     # Configure logging
-    logging.basicConfig(level=level, filename=log_file, format=log_format, filemode="w", datefmt="%Y-%m-%d %H:%M:%S", force=True)
-    
+    logging.basicConfig(
+        level=level, filename=log_file, format=log_format, filemode="w", datefmt="%Y-%m-%d %H:%M:%S", force=True
+    )
+
     # Return the root logger with the correct level set
     logger = logging.getLogger()
     logger.setLevel(level)
@@ -49,7 +51,7 @@ logger = setup_logging()
 def handle_error(error: Exception, context: str, suggestions: list = None, logger=None):
     """
     Handle errors with user-friendly messages while preserving debugging information.
-    
+
     Parameters
     ----------
     error : Exception
@@ -63,25 +65,25 @@ def handle_error(error: Exception, context: str, suggestions: list = None, logge
     """
     if logger is None:
         logger = logging.getLogger()
-    
+
     # User-friendly error message
     error_msg = f"ERROR: {context}"
-    if hasattr(error, '__class__'):
+    if hasattr(error, "__class__"):
         error_msg += f" ({error.__class__.__name__})"
-    
+
     print(f"\n{error_msg}", file=sys.stderr)
     print(f"Reason: {str(error)}", file=sys.stderr)
-    
+
     # Add suggestions if provided
     if suggestions:
         print("\nSuggested solutions:", file=sys.stderr)
         for i, suggestion in enumerate(suggestions, 1):
             print(f"  {i}. {suggestion}", file=sys.stderr)
-    
+
     # Log detailed technical information for debugging
     logger.error(f"Error in {context}: {error}")
     logger.debug("Full traceback:", exc_info=True)
-    
+
     # Print a note about debug logging
     current_level = logger.getEffectiveLevel()
     if current_level > logging.DEBUG:
@@ -91,14 +93,14 @@ def handle_error(error: Exception, context: str, suggestions: list = None, logge
 def validate_file_exists(file_path: str, file_type: str = "file") -> None:
     """
     Validate that a file exists and is readable.
-    
+
     Parameters
     ----------
     file_path : str
         Path to the file to validate
     file_type : str
         Description of the file type for error messages
-        
+
     Raises
     ------
     FileNotFoundError
@@ -107,13 +109,13 @@ def validate_file_exists(file_path: str, file_type: str = "file") -> None:
         If the file exists but isn't readable
     """
     import os
-    
+
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"The {file_type} '{file_path}' does not exist")
-    
+
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"'{file_path}' exists but is not a file")
-    
+
     if not os.access(file_path, os.R_OK):
         raise PermissionError(f"The {file_type} '{file_path}' exists but cannot be read (permission denied)")
 
@@ -121,24 +123,24 @@ def validate_file_exists(file_path: str, file_type: str = "file") -> None:
 def validate_output_directory(file_path: str) -> None:
     """
     Validate that the output directory exists and is writable.
-    
+
     Parameters
     ----------
     file_path : str
         Path to the output file
-        
+
     Raises
     ------
     PermissionError
         If the directory doesn't exist or isn't writable
     """
     import os
-    
+
     output_dir = os.path.dirname(os.path.abspath(file_path))
-    
+
     if not os.path.exists(output_dir):
         raise PermissionError(f"Output directory '{output_dir}' does not exist")
-    
+
     if not os.access(output_dir, os.W_OK):
         raise PermissionError(f"Cannot write to output directory '{output_dir}' (permission denied)")
 
@@ -146,7 +148,7 @@ def validate_output_directory(file_path: str) -> None:
 def safe_file_operation(operation_func, context: str, suggestions: list = None):
     """
     Safely execute a file operation with proper error handling.
-    
+
     Parameters
     ----------
     operation_func : callable
@@ -155,7 +157,7 @@ def safe_file_operation(operation_func, context: str, suggestions: list = None):
         Description of the operation for error messages
     suggestions : list, optional
         List of suggested solutions for common issues
-    
+
     Returns
     -------
     Result of operation_func, or None if an error occurred
@@ -166,7 +168,7 @@ def safe_file_operation(operation_func, context: str, suggestions: list = None):
         default_suggestions = [
             "Check that the file path is correct",
             "Verify the file exists in the specified location",
-            "Use absolute paths instead of relative paths"
+            "Use absolute paths instead of relative paths",
         ]
         handle_error(e, context, suggestions or default_suggestions)
         return None
@@ -174,7 +176,7 @@ def safe_file_operation(operation_func, context: str, suggestions: list = None):
         default_suggestions = [
             "Check file/directory permissions",
             "Ensure you have read/write access to the file",
-            "Try running with appropriate permissions"
+            "Try running with appropriate permissions",
         ]
         handle_error(e, context, suggestions or default_suggestions)
         return None
@@ -186,14 +188,14 @@ def safe_file_operation(operation_func, context: str, suggestions: list = None):
 def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame:
     """
     Validate BED file data and clean up common issues from parallel processing.
-    
+
     Parameters
     ----------
     bed_content : pd.DataFrame
         Raw BED data with columns: seqname, start, end
     file_path : str
         Path to the original file (for logging)
-        
+
     Returns
     -------
     pd.DataFrame
@@ -201,86 +203,92 @@ def validate_bed_data(bed_content: pd.DataFrame, file_path: str) -> pd.DataFrame
     """
     original_count = len(bed_content)
     issues_found = []
-    
+
     # Check for missing values
     missing_mask = bed_content.isnull().any(axis=1)
     if missing_mask.sum() > 0:
         issues_found.append(f"{missing_mask.sum()} rows with missing values")
         bed_content = bed_content[~missing_mask]
-    
+
     # Check for non-numeric coordinates (could be from interleaved lines)
     numeric_start = pd.to_numeric(bed_content["start"], errors="coerce")
     numeric_end = pd.to_numeric(bed_content["end"], errors="coerce")
-    
+
     invalid_coords = numeric_start.isnull() | numeric_end.isnull()
     if invalid_coords.sum() > 0:
         issues_found.append(f"{invalid_coords.sum()} rows with non-numeric coordinates")
         # Log some examples of problematic lines
         problematic_lines = bed_content[invalid_coords].head(5)
         for idx, row in problematic_lines.iterrows():
-            logger.warning(f"Invalid coordinates at line {idx+1}: chr={row['seqname']}, start={row['start']}, end={row['end']}")
+            logger.warning(
+                f"Invalid coordinates at line {idx+1}: chr={row['seqname']}, start={row['start']}, end={row['end']}"
+            )
         bed_content = bed_content[~invalid_coords]
         numeric_start = numeric_start[~invalid_coords]
         numeric_end = numeric_end[~invalid_coords]
-    
+
     # Convert to integers
     bed_content = bed_content.copy()
     bed_content["start"] = numeric_start.astype(int)
     bed_content["end"] = numeric_end.astype(int)
-    
+
     # Check for negative coordinates
     negative_coords = (bed_content["start"] < 0) | (bed_content["end"] < 0)
     if negative_coords.sum() > 0:
         issues_found.append(f"{negative_coords.sum()} rows with negative coordinates")
         bed_content = bed_content[~negative_coords]
-    
+
     # Check for invalid intervals (start >= end)
     invalid_intervals = bed_content["start"] >= bed_content["end"]
     if invalid_intervals.sum() > 0:
         issues_found.append(f"{invalid_intervals.sum()} rows where start >= end")
         bed_content = bed_content[~invalid_intervals]
-    
+
     # Check for extremely large coordinates (potential corruption)
     max_reasonable_coord = 300_000_000  # Larger than human genome
     huge_coords = (bed_content["start"] > max_reasonable_coord) | (bed_content["end"] > max_reasonable_coord)
     if huge_coords.sum() > 0:
         issues_found.append(f"{huge_coords.sum()} rows with unreasonably large coordinates")
         bed_content = bed_content[~huge_coords]
-    
+
     # Check for empty chromosome names
     empty_chroms = bed_content["seqname"].str.strip() == ""
     if empty_chroms.sum() > 0:
         issues_found.append(f"{empty_chroms.sum()} rows with empty chromosome names")
         bed_content = bed_content[~empty_chroms]
-    
+
     # Check for suspicious chromosome names (likely from interleaved lines)
     suspicious_chroms = bed_content["seqname"].str.len() > 30  # Very long names
-    suspicious_chroms |= bed_content["seqname"].str.contains(r'chr.*chr', regex=True, na=False)  # Double chr
-    suspicious_chroms |= bed_content["seqname"].str.contains(r'[ATCG]{4,}', regex=True, na=False)  # DNA sequences
-    suspicious_chroms |= bed_content["seqname"].str.contains(r'_.*_.*_', regex=True, na=False)  # Multiple underscores (cell barcodes)
+    suspicious_chroms |= bed_content["seqname"].str.contains(r"chr.*chr", regex=True, na=False)  # Double chr
+    suspicious_chroms |= bed_content["seqname"].str.contains(r"[ATCG]{4,}", regex=True, na=False)  # DNA sequences
+    suspicious_chroms |= bed_content["seqname"].str.contains(
+        r"_.*_.*_", regex=True, na=False
+    )  # Multiple underscores (cell barcodes)
     if suspicious_chroms.sum() > 0:
         issues_found.append(f"{suspicious_chroms.sum()} rows with suspicious chromosome names")
         # Log some examples
         suspicious_examples = bed_content[suspicious_chroms]["seqname"].head(5).tolist()
         logger.warning(f"Examples of suspicious chromosome names: {suspicious_examples}")
         bed_content = bed_content[~suspicious_chroms]
-    
+
     final_count = len(bed_content)
     removed_count = original_count - final_count
-    
+
     if issues_found:
         logger.warning(f"Data validation issues found in {file_path}:")
         for issue in issues_found:
             logger.warning(f"  - {issue}")
         logger.warning(f"Removed {removed_count} problematic rows ({removed_count/original_count:.1%})")
-        
+
         if removed_count / original_count > 0.1:  # More than 10% removed
-            logger.error(f"High proportion of invalid data ({removed_count/original_count:.1%}) suggests file corruption")
+            logger.error(
+                f"High proportion of invalid data ({removed_count/original_count:.1%}) suggests file corruption"
+            )
             logger.error("This may be caused by interleaved writes from parallel processes")
-    
+
     if final_count == 0:
         raise ValueError(f"No valid intervals remain after data validation in {file_path}")
-    
+
     return bed_content
 
 
@@ -304,32 +312,36 @@ def read_bed(file_path: str) -> pd.DataFrame:
         # Read only the first 3 columns to handle variable column counts in BED files
         # Use string dtype initially to handle any mixed types
         bed_content = pd.read_csv(
-            file_path, 
-            delimiter="\t", 
-            header=None, 
+            file_path,
+            delimiter="\t",
+            header=None,
             usecols=[0, 1, 2],
             names=["seqname", "start", "end"],
             dtype={"seqname": str, "start": str, "end": str},
             low_memory=False,
-            on_bad_lines='skip'  # Skip malformed lines
+            on_bad_lines="skip",  # Skip malformed lines
         )
-        
+
         if bed_content.empty:
             logger.warning(f"BED file {file_path} is empty")
             return pd.DataFrame(columns=["seqname", "start", "end"])
-        
+
         # Validate and clean the data
         bed_content = validate_bed_data(bed_content, file_path)
-        
+
         logger.info(f"Read {len(bed_content)} valid intervals from {file_path}")
         return bed_content
-        
+
     except pd.errors.EmptyDataError:
         raise ValueError(f"BED file '{file_path}' is empty or contains no valid data")
     except pd.errors.ParserError as e:
-        raise ValueError(f"BED file '{file_path}' has invalid format: {e}. Expected tab-separated format with at least 3 columns (chromosome, start, end)")
+        raise ValueError(
+            f"BED file '{file_path}' has invalid format: {e}. Expected tab-separated format with at least 3 columns (chromosome, start, end)"
+        )
     except UnicodeDecodeError:
-        raise ValueError(f"BED file '{file_path}' contains invalid characters. Ensure the file is a text file with proper encoding")
+        raise ValueError(
+            f"BED file '{file_path}' contains invalid characters. Ensure the file is a text file with proper encoding"
+        )
     except Exception as e:
         logger.error(f"Error reading BED file {file_path}: {e}")
         raise ValueError(f"Failed to read BED file '{file_path}': {e}")
@@ -348,6 +360,7 @@ def write_bed(bed_df: pd.DataFrame, out_path: str) -> None:
     """
     bed_df.to_csv(out_path, sep="\t", header=False, index=False)
 
+
 def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: int) -> None:
     """
     Write a BigWig file from a pandas DataFrame containing genomic data.
@@ -360,7 +373,7 @@ def write_bigwig(comb_data: pd.DataFrame, out_path: str, sizes_file: str, span: 
     - sizes_file (str): Path to a file containing chromosome sizes. The file should have two columns: chromosome name and size.
     - span (int): The span (in base pairs) for each data point in the BigWig file. Default is 10.
     - out_path (str): Path to the output BigWig file.
-    
+
     Returns:
     - None
 
@@ -440,6 +453,7 @@ def events_from_intervals(interval_df: pd.DataFrame) -> pd.DataFrame:
     df = interval_df.melt(id_vars=id_vars, value_name="location")
     return df
 
+
 def events_dict_from_file(file: str) -> Dict[str, pd.DataFrame]:
     """
     Reads a bed file and transforms it into a dictionary of DataFrames,
@@ -475,12 +489,9 @@ def events_dict_from_file(file: str) -> Dict[str, pd.DataFrame]:
         return dict()
 
     events = events_from_intervals(df)
-    events_by_seqname = {
-        seqname: seq_events for seqname, seq_events in events.groupby("seqname")
-    }
+    events_by_seqname = {seqname: seq_events for seqname, seq_events in events.groupby("seqname")}
 
     return events_by_seqname
-
 
 
 def full_kde_grid(x, xmin=None, xmax=None):
@@ -504,7 +515,7 @@ def full_kde_grid(x, xmin=None, xmax=None):
     if len(x) == 0:
         # Handle empty input - return empty grid
         return np.array([])
-    
+
     if xmin is None:
         xmin = np.min(x) - 1
     if xmax is None:
@@ -513,9 +524,7 @@ def full_kde_grid(x, xmin=None, xmax=None):
     return grid
 
 
-def get_kde(
-    cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None
-):
+def get_kde(cut_locations, kde_bw=500, kernel="gaussian", xmin=None, xmax=None, grid=None):
     """
     Estimates the KDE of the given data points with memory protection.
 
@@ -544,15 +553,15 @@ def get_kde(
     if len(cut_locations) == 0:
         logger.warning("No cut locations provided for KDE")
         return np.array([]), np.array([])
-    
+
     if grid is None:
         grid = full_kde_grid(cut_locations, xmin, xmax)
-    
+
     # Check for memory issues with very large grids
     if len(grid) > 10_000_000:  # 10M points
         logger.warning(f"Very large KDE grid ({len(grid)} points) may cause memory issues")
         logger.warning("Consider increasing --span parameter to reduce resolution")
-    
+
     try:
         kernel = FFTKDE(kernel=kernel, bw=kde_bw)
         kernel = kernel.fit(cut_locations)
@@ -567,12 +576,12 @@ def get_kde(
 def read_chrom_sizes_file(chrom_sizes_file: str) -> Dict[str, int]:
     """
     Read chromosome sizes from a file.
-    
+
     Parameters
     ----------
     chrom_sizes_file : str
         Path to chromosome sizes file with format: chromosome_name\tsize
-    
+
     Returns
     -------
     dict
@@ -580,45 +589,45 @@ def read_chrom_sizes_file(chrom_sizes_file: str) -> Dict[str, int]:
     """
     chrom_sizes = {}
     try:
-        with open(chrom_sizes_file, 'r') as f:
+        with open(chrom_sizes_file, "r") as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
-                    parts = line.split('\t')
+                if line and not line.startswith("#"):
+                    parts = line.split("\t")
                     if len(parts) >= 2:
                         chrom_sizes[parts[0]] = int(parts[1])
         logger.info(f"Read sizes for {len(chrom_sizes)} chromosomes from {chrom_sizes_file}")
     except Exception as e:
         logger.warning(f"Could not read chromosome sizes file {chrom_sizes_file}: {e}")
-    
+
     return chrom_sizes
 
 
 def get_chromosome_size_estimate(events_df: pd.DataFrame) -> int:
     """
     Estimate chromosome size from the maximum coordinate in events.
-    
+
     Parameters
     ----------
     events_df : pd.DataFrame
         DataFrame containing genomic events with 'location' column.
-    
+
     Returns
     -------
     int
         Estimated chromosome size based on maximum coordinate.
     """
-    if events_df.empty or 'location' not in events_df.columns:
+    if events_df.empty or "location" not in events_df.columns:
         return 0
-    return int(events_df['location'].max())
+    return int(events_df["location"].max())
 
 
-def filter_chromosomes(chromosome_list: List[str], 
-                      exclude_contigs: bool = False,
-                      chromosome_pattern: Optional[str] = None) -> List[str]:
+def filter_chromosomes(
+    chromosome_list: List[str], exclude_contigs: bool = False, chromosome_pattern: Optional[str] = None
+) -> List[str]:
     """
     Filter chromosome list based on exclusion rules and pattern matching.
-    
+
     Parameters
     ----------
     chromosome_list : list
@@ -627,66 +636,77 @@ def filter_chromosomes(chromosome_list: List[str],
         If True, exclude chromosomes containing common contig keywords.
     chromosome_pattern : str, optional
         Regex pattern - only include chromosomes matching this pattern.
-    
+
     Returns
     -------
     list
         Filtered list of chromosome names.
     """
     filtered_chroms = chromosome_list.copy()
-    
+
     # Apply contig exclusion
     if exclude_contigs:
         contig_keywords = [
-            'random', 'Un', 'alt', 'patch', 'hap', 'scaffold', 'contig', 
-            'chrM', 'chrMT', 'chrEBV', 'GL', 'KI', 'JH'  # Common NCBI/UCSC prefixes
+            "random",
+            "Un",
+            "alt",
+            "patch",
+            "hap",
+            "scaffold",
+            "contig",
+            "chrM",
+            "chrMT",
+            "chrEBV",
+            "GL",
+            "KI",
+            "JH",  # Common NCBI/UCSC prefixes
         ]
-        
+
         before_count = len(filtered_chroms)
         filtered_chroms = [
-            chrom for chrom in filtered_chroms
+            chrom
+            for chrom in filtered_chroms
             if not any(keyword.lower() in chrom.lower() for keyword in contig_keywords)
         ]
         excluded_count = before_count - len(filtered_chroms)
-        
+
         if excluded_count > 0:
             logger.info(f"Excluded {excluded_count} contigs/scaffolds")
             logger.debug(f"Remaining chromosomes: {', '.join(sorted(filtered_chroms))}")
-    
+
     # Apply pattern matching
     if chromosome_pattern:
         try:
             pattern = re.compile(chromosome_pattern)
             before_count = len(filtered_chroms)
-            filtered_chroms = [
-                chrom for chrom in filtered_chroms
-                if pattern.match(chrom)
-            ]
+            filtered_chroms = [chrom for chrom in filtered_chroms if pattern.match(chrom)]
             excluded_count = before_count - len(filtered_chroms)
-            
+
             if excluded_count > 0:
                 logger.info(f"Pattern '{chromosome_pattern}' excluded {excluded_count} chromosomes")
                 logger.debug(f"Matching chromosomes: {', '.join(sorted(filtered_chroms))}")
-                
+
         except re.error as e:
             logger.error(f"Invalid regex pattern '{chromosome_pattern}': {e}")
             raise ValueError(f"Invalid regex pattern: {e}")
-    
+
     if not filtered_chroms:
         logger.warning("No chromosomes remain after filtering")
     else:
         logger.info(f"Processing {len(filtered_chroms)} chromosomes after filtering")
-    
+
     return filtered_chroms
 
 
-def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame], 
-                           chrom_sizes_file: Optional[str] = None,
-                           exclude_contigs: bool = False,
-                           chromosome_pattern: Optional[str] = None) -> List[str]:
+def sort_chromosomes_by_size(
+    ebs_c1: Dict[str, pd.DataFrame],
+    chrom_sizes_file: Optional[str] = None,
+    exclude_contigs: bool = False,
+    chromosome_pattern: Optional[str] = None,
+) -> List[str]:
     """
     Sort chromosomes by size (largest first) with robust fallback ordering and filtering.
-    
+
     Parameters
     ----------
     ebs_c1 : dict
@@ -698,7 +718,7 @@ def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame],
         If True, exclude contigs/scaffolds with common keywords.
     chromosome_pattern : str, optional
         Regex pattern - only include chromosomes matching this pattern.
-    
+
     Returns
     -------
     list
@@ -706,22 +726,20 @@ def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame],
     """
     # Start with all available chromosomes
     all_chroms = list(ebs_c1.keys())
-    
+
     # Apply filtering
     filtered_chroms = filter_chromosomes(
-        all_chroms, 
-        exclude_contigs=exclude_contigs,
-        chromosome_pattern=chromosome_pattern
+        all_chroms, exclude_contigs=exclude_contigs, chromosome_pattern=chromosome_pattern
     )
-    
+
     if not filtered_chroms:
         return []
-    
+
     # Try to read actual chromosome sizes if file is provided
     actual_chrom_sizes = {}
     if chrom_sizes_file:
         actual_chrom_sizes = read_chrom_sizes_file(chrom_sizes_file)
-    
+
     # Calculate size estimates for each filtered chromosome
     chrom_sizes = []
     for seqname in filtered_chroms:
@@ -733,20 +751,20 @@ def sort_chromosomes_by_size(ebs_c1: Dict[str, pd.DataFrame],
             # Fall back to estimation from data
             size = get_chromosome_size_estimate(ebs_c1[seqname])
             logger.debug(f"Estimated size for {seqname}: {size:,}")
-        
+
         chrom_sizes.append((seqname, size))
-    
+
     # Sort by size (descending), then by chromosome name for reproducibility
     # This ensures consistent ordering even when chromosomes have the same size
     sorted_chroms = sorted(chrom_sizes, key=lambda x: (-x[1], x[0]))
-    
+
     # Log the sorting approach used
     if actual_chrom_sizes:
         found_actual = sum(1 for name, _ in sorted_chroms if name in actual_chrom_sizes)
         logger.info(f"Sorted chromosomes using actual sizes for {found_actual}/{len(sorted_chroms)} chromosomes")
     else:
         logger.info("Sorted chromosomes using size estimates from data")
-    
+
     # Extract just the chromosome names
     return [chrom[0] for chrom in sorted_chroms]
 
@@ -791,27 +809,27 @@ def make_kdes(
 
     # Filter out blacklisted sequences
     available_sequences = {k: v for k, v in ebs_c1.items() if k not in blacklisted}
-    
+
     # Sort chromosomes by size (largest first) with filtering
     sorted_sequences = sort_chromosomes_by_size(
-        available_sequences, 
+        available_sequences,
         chrom_sizes_file=chrom_sizes_file,
         exclude_contigs=exclude_contigs,
-        chromosome_pattern=chromosome_pattern
+        chromosome_pattern=chromosome_pattern,
     )
-    
+
     result_dfs = list()
     ntotal = len(sorted_sequences)
     signal_list_global = list()
-    
+
     if ntotal == 0:
         logger.warning("No sequences available for processing after filtering")
         return pd.DataFrame(), []
-    
+
     logger.info(f"Processing {ntotal} chromosomes in order of decreasing size")
-    
+
     # Log the processing order for the first few chromosomes
-    preview_chroms = sorted_sequences[:min(5, ntotal)]
+    preview_chroms = sorted_sequences[: min(5, ntotal)]
     logger.info(f"Processing order (first {len(preview_chroms)}): {', '.join(preview_chroms)}")
 
     for i, seqname in enumerate(sorted_sequences):
@@ -940,22 +958,19 @@ def tracks_to_intervals(comb_data, step_size):
         DataFrame with all peak intervals.
     """
     peaks_list = list()
-    jobs = [
-        (loc_comb_data, step_size, seqname)
-        for seqname, loc_comb_data in comb_data.groupby("seqname")
-    ]
+    jobs = [(loc_comb_data, step_size, seqname) for seqname, loc_comb_data in comb_data.groupby("seqname")]
     with multiprocessing.Pool() as pool:
         for peaks in pool.imap(track_to_interval, jobs, 10):
             peaks_list.append(peaks)
     # Filter out empty DataFrames before concatenation to avoid deprecation warning
     non_empty_peaks = [df for df in peaks_list if not df.empty]
-    
+
     if not non_empty_peaks:
         # Handle case where no peaks are found in any chromosome
         empty_peaks = pd.DataFrame(columns=["seqname", "start", "end", "mean", "summit", "summit_height"])
         empty_peaks["length"] = pd.Series([], dtype=int)
         return empty_peaks
-    
+
     peaks = pd.concat(non_empty_peaks, axis=0)
     peaks["start"] = peaks["start"].clip(lower=0)
     peaks["length"] = peaks["end"] - peaks["start"]
@@ -1018,12 +1033,12 @@ def include_auc(df: pd.DataFrame) -> pd.DataFrame:
     df : pd.DataFrame
         DataFrame with 'auc' column added.
     """
-    if df.empty or 'mean' not in df.columns:
+    if df.empty or "mean" not in df.columns:
         # Handle empty DataFrame or missing columns
-        if 'auc' not in df.columns:
-            df['auc'] = pd.Series([], dtype=float)
+        if "auc" not in df.columns:
+            df["auc"] = pd.Series([], dtype=float)
         return df
-    
+
     df["auc"] = df["mean"] * df["length"]
     return df
 
@@ -1045,15 +1060,13 @@ def name_peaks(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         # Handle empty DataFrame
         df = df.copy()
-        df['name'] = pd.Series([], dtype=str)
+        df["name"] = pd.Series([], dtype=str)
         return df
-    
+
     name_dat = pd.DataFrame(
         map(lambda x: ("_".join(x[:-2]), x[-2], x[-1]), list(df.index.str.split("_"))),
         columns=["seqname", "interval", "is_peak"],
         index=df.index,
     )
-    df["name"] = (
-        name_dat["seqname"] + "_" + name_dat["interval"]
-    )
+    df["name"] = name_dat["seqname"] + "_" + name_dat["interval"]
     return df

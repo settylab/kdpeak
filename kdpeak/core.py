@@ -37,7 +37,9 @@ def parse_arguments():
     -------
     Parsed command line arguments.
     """
-    desc = "A script that uses kernel density estimation (KDE) to identify genomic peaks from bed-formatted genomic reads."
+    desc = (
+        "A script that uses kernel density estimation (KDE) to identify genomic peaks from bed-formatted genomic reads."
+    )
     parser = argparse.ArgumentParser(description=desc)
 
     parser.add_argument(
@@ -74,7 +76,7 @@ def parse_arguments():
         type=str,
         help="""Path to the output file where the event density will be saved.\
         The event density is the internally computed signal on which the peaks \
-        are called based on a cutoff. It will be saved in the bigwig format."""
+        are called based on a cutoff. It will be saved in the bigwig format.""",
     )
 
     parser.add_argument(
@@ -174,11 +176,15 @@ def main():
         try:
             validate_file_exists(args.bed_file, "BED input file")
         except (FileNotFoundError, PermissionError) as e:
-            handle_error(e, "Failed to access input BED file", [
-                "Check that the file path is correct",
-                "Verify the file exists and is readable",
-                "Use absolute paths if needed"
-            ])
+            handle_error(
+                e,
+                "Failed to access input BED file",
+                [
+                    "Check that the file path is correct",
+                    "Verify the file exists and is readable",
+                    "Use absolute paths if needed",
+                ],
+            )
             return 1
 
         # Validate chromosome sizes file if provided
@@ -186,11 +192,15 @@ def main():
             try:
                 validate_file_exists(args.chrom_sizes, "chromosome sizes file")
             except (FileNotFoundError, PermissionError) as e:
-                handle_error(e, "Failed to access chromosome sizes file", [
-                    "Download chromosome sizes with: fetchChromSizes hg38 hg38.chrom.sizes",
-                    "Ensure the file format is: chromosome_name<tab>size",
-                    "Check file permissions"
-                ])
+                handle_error(
+                    e,
+                    "Failed to access chromosome sizes file",
+                    [
+                        "Download chromosome sizes with: fetchChromSizes hg38 hg38.chrom.sizes",
+                        "Ensure the file format is: chromosome_name<tab>size",
+                        "Check file permissions",
+                    ],
+                )
                 return 1
 
         # Validate output directories
@@ -201,29 +211,33 @@ def main():
             if args.density_out:
                 validate_output_directory(args.density_out)
         except PermissionError as e:
-            handle_error(e, "Cannot write to output directory", [
-                "Create the output directory if it doesn't exist",
-                "Check directory permissions",
-                "Use a different output directory"
-            ])
+            handle_error(
+                e,
+                "Cannot write to output directory",
+                [
+                    "Create the output directory if it doesn't exist",
+                    "Check directory permissions",
+                    "Use a different output directory",
+                ],
+            )
             return 1
 
         # Read input data
         logger.info("Reading %s", args.bed_file)
-        
+
         def read_bed_file():
             return events_dict_from_file(args.bed_file)
-        
+
         ebs_c1 = safe_file_operation(
             read_bed_file,
             "Failed to read BED file",
             [
                 "Ensure the file is in valid BED format (tab-separated)",
                 "Check that the file contains at least 3 columns: chromosome, start, end",
-                "Verify the file is not corrupted"
-            ]
+                "Verify the file is not corrupted",
+            ],
         )
-        
+
         if ebs_c1 is None:
             return 1
 
@@ -234,8 +248,8 @@ def main():
                 [
                     "Check that the BED file contains data",
                     "Verify the file format: chromosome<tab>start<tab>end",
-                    "Ensure coordinates are valid (start < end, non-negative)"
-                ]
+                    "Ensure coordinates are valid (start < end, non-negative)",
+                ],
             )
             return 1
 
@@ -259,8 +273,8 @@ def main():
                     [
                         "Check chromosome filtering settings (--exclude-contigs, --chromosome-pattern)",
                         "Verify blacklisted sequences (--blacklisted-seqs)",
-                        "Ensure your BED file contains valid chromosome names"
-                    ]
+                        "Ensure your BED file contains valid chromosome names",
+                    ],
                 )
                 return 1
 
@@ -281,52 +295,57 @@ def main():
                         f"Try reducing --frip (currently {args.fraction_in_peaks})",
                         f"Try reducing --min-peak-size (currently {args.min_peak_size})",
                         f"Try adjusting --kde-bw (currently {args.kde_bw})",
-                        "Check if your data has sufficient signal"
-                    ]
+                        "Check if your data has sufficient signal",
+                    ],
                 )
                 return 1
 
             bed = include_auc(name_peaks(peaks))
 
         except Exception as e:
-            handle_error(e, "Failed during peak calling analysis", [
-                "Try adjusting parameters (--kde-bw, --frip, --min-peak-size)",
-                "Check input data quality",
-                "Ensure sufficient memory is available"
-            ])
+            handle_error(
+                e,
+                "Failed during peak calling analysis",
+                [
+                    "Try adjusting parameters (--kde-bw, --frip, --min-peak-size)",
+                    "Check input data quality",
+                    "Ensure sufficient memory is available",
+                ],
+            )
             return 1
 
         # Write output files
         def write_main_output():
             write_bed(bed[["seqname", "start", "end", "name", "auc"]], args.out)
             return True  # Return success indicator
-        
+
         logger.info("Writing results to %s...", args.out)
-        if safe_file_operation(
-            write_main_output,
-            f"Failed to write main output to {args.out}",
-            [
-                "Check output directory permissions",
-                "Ensure sufficient disk space",
-                "Verify the output path is valid"
-            ]
-        ) is None:
+        if (
+            safe_file_operation(
+                write_main_output,
+                f"Failed to write main output to {args.out}",
+                [
+                    "Check output directory permissions",
+                    "Ensure sufficient disk space",
+                    "Verify the output path is valid",
+                ],
+            )
+            is None
+        ):
             return 1
-        
+
         # Write optional outputs
         if args.summits_out:
+
             def write_summits():
                 bed_summits = bed.copy()
                 bed_summits["start"] = bed_summits["summit"]
                 bed_summits["end"] = bed_summits["summit"] + 1
                 write_bed(bed_summits[["seqname", "start", "end", "name", "summit_height"]], args.summits_out)
                 return True  # Return success indicator
-            
+
             logger.info("Writing summits to %s...", args.summits_out)
-            if safe_file_operation(
-                write_summits,
-                f"Failed to write summits to {args.summits_out}"
-            ) is None:
+            if safe_file_operation(write_summits, f"Failed to write summits to {args.summits_out}") is None:
                 return 1
 
         if args.density_out:
@@ -337,27 +356,30 @@ def main():
                     [
                         "Add --chrom-sizes argument with a chromosome sizes file",
                         "Download with: fetchChromSizes hg38 hg38.chrom.sizes",
-                        "Or use a different output format"
-                    ]
+                        "Or use a different output format",
+                    ],
                 )
                 return 1
-            
+
             def write_density():
                 write_bigwig(comb_data, args.density_out, sizes_file=args.chrom_sizes, span=args.span)
                 return True  # Return success indicator
-            
+
             logger.info("Writing density to %s...", args.density_out)
-            if safe_file_operation(
-                write_density,
-                f"Failed to write density BigWig to {args.density_out}",
-                [
-                    "Ensure pyBigWig is installed correctly",
-                    "Check chromosome sizes file format",
-                    "Verify sufficient disk space"
-                ]
-            ) is None:
+            if (
+                safe_file_operation(
+                    write_density,
+                    f"Failed to write density BigWig to {args.density_out}",
+                    [
+                        "Ensure pyBigWig is installed correctly",
+                        "Check chromosome sizes file format",
+                        "Verify sufficient disk space",
+                    ],
+                )
+                is None
+            ):
                 return 1
-        
+
         logger.info("Finished successfully.")
         print(f"\nSUCCESS: Peak calling completed!")
         print(f"Results written to: {args.out}")
@@ -371,12 +393,17 @@ def main():
         print("\nOperation cancelled by user", file=sys.stderr)
         return 130
     except Exception as e:
-        handle_error(e, "Unexpected error during peak calling", [
-            "Run with --log DEBUG for detailed information",
-            "Check input file format and parameters",
-            "Report this error if it persists"
-        ])
+        handle_error(
+            e,
+            "Unexpected error during peak calling",
+            [
+                "Run with --log DEBUG for detailed information",
+                "Check input file format and parameters",
+                "Report this error if it persists",
+            ],
+        )
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
