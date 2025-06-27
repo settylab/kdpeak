@@ -7,3 +7,4 @@ __pycache__/
 *.bw
 *.bed
 CLAUDE.md
+coverage.xml
