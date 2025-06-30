@@ -102,6 +102,26 @@ def parse_arguments(args=None):
         help="Output format (default: bigwig)",
     )
 
+    # Stats operation
+    stats_parser = subparsers.add_parser(
+        "stats", help="Compute descriptive statistics for a single BigWig file"
+    )
+    stats_parser.add_argument("input_file", help="Input BigWig file")
+    stats_parser.add_argument("--out", help="Output file for statistics (optional)")
+    stats_parser.add_argument(
+        "--format",
+        choices=["json", "csv", "tsv"],
+        default="json",
+        help="Output format (default: json)",
+    )
+    stats_parser.add_argument(
+        "--percentiles",
+        nargs="+",
+        type=float,
+        default=[25, 50, 75, 90, 95, 99],
+        help="Percentiles to compute (default: 25 50 75 90 95 99)",
+    )
+
     # Correlation operation
     corr_parser = subparsers.add_parser(
         "correlate", help="Compute pairwise correlation matrix"
@@ -149,7 +169,7 @@ def parse_arguments(args=None):
     )
 
     # Common arguments for all operations
-    for subparser in [add_parser, mult_parser, regress_parser, corr_parser]:
+    for subparser in [add_parser, mult_parser, regress_parser, stats_parser, corr_parser]:
         subparser.add_argument(
             "--chrom-sizes", help="Chromosome sizes file (required for BigWig output)"
         )
@@ -850,6 +870,150 @@ def write_bigwig_output(
             )
 
 
+def compute_statistics(
+    data: pd.DataFrame, input_file: str, percentiles: List[float] = None
+) -> Dict:
+    """
+    Compute comprehensive descriptive statistics for a single BigWig file.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Data with columns ['chromosome', 'start', 'end', 'bw_0'] 
+    input_file : str
+        Path to the input BigWig file
+    percentiles : List[float]
+        List of percentiles to compute (0-100)
+
+    Returns
+    -------
+    Dict
+        Dictionary containing comprehensive statistics
+    """
+    if percentiles is None:
+        percentiles = [25, 50, 75, 90, 95, 99]
+
+    # Get the value column (should be 'bw_0' for single file)
+    value_col = [col for col in data.columns if col.startswith("bw_")][0]
+    values = data[value_col]
+
+    # Basic statistics
+    stats_dict = {
+        "file": os.path.basename(input_file),
+        "file_path": input_file,
+        "total_bins": len(data),
+        "non_zero_bins": int((values != 0).sum()),
+        "zero_bins": int((values == 0).sum()),
+        "coverage": float((values != 0).mean()),
+        "mean": float(values.mean()),
+        "std": float(values.std()),
+        "variance": float(values.var()),
+        "min": float(values.min()),
+        "max": float(values.max()),
+        "median": float(values.median()),
+        "sum": float(values.sum()),
+    }
+
+    # Add percentiles
+    stats_dict["percentiles"] = {}
+    for p in percentiles:
+        stats_dict["percentiles"][f"p{p}"] = float(np.percentile(values, p))
+
+    # Additional statistics for non-zero values only
+    non_zero_values = values[values != 0]
+    if len(non_zero_values) > 0:
+        stats_dict["non_zero_stats"] = {
+            "mean": float(non_zero_values.mean()),
+            "std": float(non_zero_values.std()),
+            "min": float(non_zero_values.min()),
+            "max": float(non_zero_values.max()),
+            "median": float(non_zero_values.median()),
+        }
+    else:
+        stats_dict["non_zero_stats"] = None
+
+    # Per-chromosome statistics
+    stats_dict["per_chromosome"] = {}
+    for chrom in data["chromosome"].unique():
+        chrom_data = data[data["chromosome"] == chrom]
+        chrom_values = chrom_data[value_col]
+        
+        stats_dict["per_chromosome"][chrom] = {
+            "bins": len(chrom_data),
+            "non_zero_bins": int((chrom_values != 0).sum()),
+            "coverage": float((chrom_values != 0).mean()),
+            "mean": float(chrom_values.mean()),
+            "std": float(chrom_values.std()),
+            "min": float(chrom_values.min()),
+            "max": float(chrom_values.max()),
+            "median": float(chrom_values.median()),
+            "sum": float(chrom_values.sum()),
+        }
+
+    return stats_dict
+
+
+def write_statistics_output(stats_dict: Dict, output_file: str, format_type: str):
+    """
+    Write statistics to output file in specified format.
+
+    Parameters
+    ----------
+    stats_dict : Dict
+        Statistics dictionary from compute_statistics
+    output_file : str
+        Output file path
+    format_type : str
+        Output format: 'json', 'csv', or 'tsv'
+    """
+    if format_type == "json":
+        with open(output_file, "w") as f:
+            json.dump(stats_dict, f, indent=2)
+    
+    elif format_type in ["csv", "tsv"]:
+        delimiter = "," if format_type == "csv" else "\t"
+        
+        # Flatten the statistics for tabular output
+        rows = []
+        
+        # Overall statistics
+        for key, value in stats_dict.items():
+            if key not in ["percentiles", "per_chromosome", "non_zero_stats"]:
+                rows.append({"category": "overall", "statistic": key, "value": value})
+        
+        # Percentiles
+        if "percentiles" in stats_dict and stats_dict["percentiles"]:
+            for p_name, p_value in stats_dict["percentiles"].items():
+                rows.append({"category": "percentile", "statistic": p_name, "value": p_value})
+        
+        # Non-zero statistics
+        if "non_zero_stats" in stats_dict and stats_dict["non_zero_stats"]:
+            for stat_name, stat_value in stats_dict["non_zero_stats"].items():
+                rows.append({"category": "non_zero", "statistic": stat_name, "value": stat_value})
+        
+        # Per-chromosome statistics (top 10 chromosomes by coverage)
+        if "per_chromosome" in stats_dict:
+            chrom_stats = stats_dict["per_chromosome"]
+            # Sort chromosomes by coverage
+            sorted_chroms = sorted(
+                chrom_stats.items(), 
+                key=lambda x: x[1]["coverage"], 
+                reverse=True
+            )[:10]  # Top 10 chromosomes
+            
+            for chrom, chrom_data in sorted_chroms:
+                for stat_name, stat_value in chrom_data.items():
+                    rows.append({
+                        "category": f"chromosome_{chrom}", 
+                        "statistic": stat_name, 
+                        "value": stat_value
+                    })
+        
+        # Write to file
+        df = pd.DataFrame(rows)
+        df.to_csv(output_file, sep=delimiter, index=False)
+
+
 def compute_correlation_matrix(
     data: pd.DataFrame, method: str = "pearson", min_overlap: int = 1000
 ) -> Tuple[pd.DataFrame, Dict]:
@@ -1244,6 +1408,8 @@ def main():
         # Get input files based on operation
         if args.operation in ["add", "multiply", "correlate"]:
             input_files = args.input_files
+        elif args.operation == "stats":
+            input_files = [args.input_file]
         elif args.operation == "regress":
             # Parse variable mappings from target and predictors arguments
             var_mapping, target_var, predictor_vars = parse_variable_mapping(
@@ -1350,6 +1516,59 @@ def main():
                 chrom_sizes,
                 span,
             )
+
+        elif args.operation == "stats":
+            logger.info("Computing statistics...")
+            
+            # Compute comprehensive statistics
+            stats_dict = compute_statistics(data, args.input_file, args.percentiles)
+            
+            # Print summary to console
+            print("\n" + "=" * 50)
+            print("BIGWIG STATISTICS")
+            print("=" * 50)
+            print(f"File: {stats_dict['file']}")
+            print(f"Total bins: {stats_dict['total_bins']:,}")
+            print(f"Non-zero bins: {stats_dict['non_zero_bins']:,}")
+            print(f"Coverage: {stats_dict['coverage']:.4f}")
+            print(f"Mean: {stats_dict['mean']:.4f}")
+            print(f"Standard deviation: {stats_dict['std']:.4f}")
+            print(f"Min: {stats_dict['min']:.4f}")
+            print(f"Max: {stats_dict['max']:.4f}")
+            print(f"Median: {stats_dict['median']:.4f}")
+            print(f"Sum: {stats_dict['sum']:.4f}")
+            
+            # Print percentiles
+            print("\nPercentiles:")
+            for p_name, p_value in stats_dict['percentiles'].items():
+                print(f"  {p_name}: {p_value:.4f}")
+            
+            # Print non-zero statistics if available
+            if stats_dict['non_zero_stats']:
+                nz_stats = stats_dict['non_zero_stats']
+                print(f"\nNon-zero values only:")
+                print(f"  Mean: {nz_stats['mean']:.4f}")
+                print(f"  Std: {nz_stats['std']:.4f}")
+                print(f"  Min: {nz_stats['min']:.4f}")
+                print(f"  Max: {nz_stats['max']:.4f}")
+            
+            # Print top chromosomes by coverage
+            chrom_stats = stats_dict['per_chromosome']
+            sorted_chroms = sorted(
+                chrom_stats.items(), 
+                key=lambda x: x[1]['coverage'], 
+                reverse=True
+            )[:5]  # Top 5 chromosomes
+            
+            print(f"\nTop chromosomes by coverage:")
+            for chrom, chrom_data in sorted_chroms:
+                print(f"  {chrom}: coverage={chrom_data['coverage']:.4f}, mean={chrom_data['mean']:.4f}")
+            
+            # Write output file if specified
+            if args.out:
+                write_statistics_output(stats_dict, args.out, args.format)
+                logger.info(f"Statistics written to {args.out}")
+                print(f"\nDetailed statistics written to: {args.out}")
 
         elif args.operation == "regress":
             logger.info("Performing regression analysis...")

@@ -94,6 +94,18 @@ The `bwops` utility provides mathematical operations and regression analysis on 
 ### Basic Operations
 
 ```bash
+# Get comprehensive statistics for a single BigWig file
+bwops stats signal.bw --chrom-sizes hg38.chrom.sizes
+
+# Export statistics to JSON file
+bwops stats signal.bw --out stats.json --chrom-sizes hg38.chrom.sizes
+
+# Get statistics for specific chromosomes only
+bwops stats signal.bw --chromosomes chr1 chr2 chr3 --chrom-sizes hg38.chrom.sizes
+
+# Export statistics to CSV format
+bwops stats signal.bw --out stats.csv --format csv --chrom-sizes hg38.chrom.sizes
+
 # Add multiple BigWig files
 bwops add file1.bw file2.bw file3.bw --out sum.bw --chrom-sizes hg38.chrom.sizes
 
@@ -109,6 +121,68 @@ bwops multiply signal1.bw signal2.bw --out product.bw \
 
 # Output to different formats
 bwops add file1.bw file2.bw --out results.csv --format csv
+```
+
+### Statistics Analysis
+
+The `bwops stats` command provides comprehensive descriptive statistics for BigWig files:
+
+```bash
+# Basic statistics with console output
+bwops stats ChIP_signal.bw --chrom-sizes hg38.chrom.sizes
+
+# Export detailed statistics to JSON
+bwops stats ChIP_signal.bw --out detailed_stats.json --chrom-sizes hg38.chrom.sizes
+
+# Focus on specific chromosomes 
+bwops stats enhancer_marks.bw --chromosomes chr1 chr2 chr3 --out stats.json --chrom-sizes hg38.chrom.sizes
+
+# Export to CSV for downstream analysis
+bwops stats ATAC_signal.bw --out stats.csv --format csv --chrom-sizes hg38.chrom.sizes
+
+# Custom percentiles and regional analysis
+bwops stats signal.bw --percentiles 10 25 50 75 90 95 99 \
+      --region chr1:1000000-2000000 \
+      --out region_stats.json --chrom-sizes hg38.chrom.sizes
+
+# Exclude problematic sequences
+bwops stats signal.bw --exclude-contigs --blacklisted-seqs chrM chrY \
+      --chromosome-pattern "chr[0-9XY]+$" \
+      --chrom-sizes hg38.chrom.sizes
+```
+
+#### Statistics Output
+
+The stats command provides comprehensive statistics including:
+
+- **Basic statistics**: mean, standard deviation, min, max, median, sum
+- **Coverage metrics**: total bins, non-zero bins, coverage fraction
+- **Distribution analysis**: customizable percentiles (default: 25, 50, 75, 90, 95, 99)
+- **Non-zero statistics**: separate analysis of only non-zero values
+- **Per-chromosome breakdown**: statistics for each chromosome individually
+
+**JSON output format**:
+```json
+{
+  "file": "signal.bw",
+  "total_bins": 2489565,
+  "non_zero_bins": 2489368,
+  "coverage": 0.9999,
+  "mean": 0.0175,
+  "std": 0.1363,
+  "percentiles": {
+    "p25": 0.0000,
+    "p75": 0.0098,
+    "p99": 0.1625
+  },
+  "per_chromosome": {
+    "chr1": {
+      "bins": 2489565,
+      "coverage": 0.9999,
+      "mean": 0.0175
+    }
+  }
+}
 ```
 
 ### Regression Analysis
