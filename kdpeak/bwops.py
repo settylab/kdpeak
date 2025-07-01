@@ -114,7 +114,7 @@ def parse_arguments(args=None):
     regress_parser.add_argument(
         "--normalize",
         action="store_true",
-        help="Normalize each BigWig file so that its mean equals 1 before regression",
+        help="Apply term-wise normalization: normalize individual terms and interaction products separately before regression",
     )
 
     # Stats operation
@@ -660,6 +660,7 @@ def perform_regression(
     formula: str,
     regression_type: str = "linear",
     var_mapping: Dict[str, str] = None,
+    normalize_terms: bool = False,
 ) -> Dict:
     """Perform regression analysis on the data using variable mapping."""
     logger = logging.getLogger()
@@ -714,12 +715,39 @@ def perform_regression(
     # Build design matrix
     X_cols = []
     X_names = []
+    normalization_info = []
+
+    def normalize_column(col_data, col_name):
+        """Normalize a single column to have mean = 1 (non-zero values)."""
+        non_zero_mask = col_data != 0
+        if not non_zero_mask.any():
+            logger.warning(f"Column '{col_name}' contains only zeros - cannot normalize")
+            return col_data, 1.0
+        
+        non_zero_mean = col_data[non_zero_mask].mean()
+        if non_zero_mean == 0:
+            logger.warning(f"Column '{col_name}' has zero non-zero mean - cannot normalize")
+            return col_data, 1.0
+        
+        normalization_factor = 1.0 / non_zero_mean
+        normalized_col = col_data * normalization_factor
+        
+        if normalize_terms:
+            logger.info(f"  Normalized term '{col_name}': "
+                       f"mean {non_zero_mean:.6f} → {normalized_col[non_zero_mask].mean():.6f} "
+                       f"(factor: {normalization_factor:.6f})")
+        
+        return normalized_col, normalization_factor
+
+    if normalize_terms:
+        logger.info("Applying term-wise normalization before regression...")
 
     for term in predictor_terms:
         if "*" in term:
-            # Interaction term
+            # Interaction term - normalize individual factors first, then compute product, then normalize product
             factors = [f.strip() for f in term.split("*")]
             factor_cols = []
+            factor_data = []
 
             for factor in factors:
                 if factor not in var_to_col:
@@ -727,13 +755,27 @@ def perform_regression(
                         f"Predictor variable '{factor}' not found in variable mapping"
                     )
                 factor_cols.append(var_to_col[factor])
+                
+                # Get factor data and optionally normalize it
+                raw_factor_data = data[var_to_col[factor]]
+                if normalize_terms:
+                    normalized_factor_data, factor_norm = normalize_column(raw_factor_data, factor)
+                    factor_data.append(normalized_factor_data)
+                    normalization_info.append(f"Factor '{factor}': {factor_norm:.6f}")
+                else:
+                    factor_data.append(raw_factor_data)
 
-            # Create interaction column
-            interaction_data = data[factor_cols[0]].copy()
+            # Create interaction column from (potentially normalized) factors
+            interaction_data = factor_data[0].copy()
             interaction_name = factors[0]
-            for i in range(1, len(factor_cols)):
-                interaction_data *= data[factor_cols[i]]
+            for i in range(1, len(factor_data)):
+                interaction_data *= factor_data[i]
                 interaction_name += f"*{factors[i]}"
+
+            # Normalize the interaction term itself
+            if normalize_terms:
+                interaction_data, interaction_norm = normalize_column(interaction_data, interaction_name)
+                normalization_info.append(f"Interaction '{interaction_name}': {interaction_norm:.6f}")
 
             X_cols.append(interaction_data)
             X_names.append(interaction_name)
@@ -746,15 +788,31 @@ def perform_regression(
                     f"Predictor variable '{term_clean}' not found in variable mapping"
                 )
 
-            X_cols.append(data[var_to_col[term_clean]])
+            raw_term_data = data[var_to_col[term_clean]]
+            if normalize_terms:
+                normalized_term_data, term_norm = normalize_column(raw_term_data, term_clean)
+                X_cols.append(normalized_term_data)
+                normalization_info.append(f"Term '{term_clean}': {term_norm:.6f}")
+            else:
+                X_cols.append(raw_term_data)
+                
             X_names.append(term_clean)
+
+    # Also normalize target if requested
+    if normalize_terms:
+        target_data = data[target_col]
+        normalized_target, target_norm = normalize_column(target_data, target_var)
+        normalization_info.append(f"Target '{target_var}': {target_norm:.6f}")
+        logger.info("Term-wise normalization completed.")
+    else:
+        normalized_target = data[target_col]
 
     if not X_cols:
         raise ValueError("No predictor variables found in data")
 
     # Create design matrix
     X = np.column_stack(X_cols)
-    y = data[target_col].values
+    y = normalized_target.values
 
     # Remove NaN values
     mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
@@ -806,6 +864,8 @@ def perform_regression(
             "n_obs": n,
             "mse": mse,
             "mask": mask,
+            "normalized_terms": normalize_terms,
+            "normalization_info": normalization_info if normalize_terms else None,
         }
 
     elif regression_type == "logistic":
@@ -823,6 +883,8 @@ def perform_regression(
             "variable_names": X_names,
             "n_obs": len(y),
             "mask": mask,
+            "normalized_terms": normalize_terms,
+            "normalization_info": normalization_info if normalize_terms else None,
         }
 
     return results
@@ -1586,8 +1648,8 @@ def main():
 
         logger.info(f"Read {len(data)} data points")
 
-        # Apply normalization if requested
-        if hasattr(args, 'normalize') and args.normalize:
+        # Apply input normalization if requested (except for regression, which has term-wise normalization)
+        if hasattr(args, 'normalize') and args.normalize and args.operation != "regress":
             data = normalize_bigwig_data(data, logger)
 
         # Perform operation
@@ -1668,7 +1730,7 @@ def main():
 
         elif args.operation == "regress":
             logger.info("Performing regression analysis...")
-            results = perform_regression(data, args.formula, args.type, var_mapping)
+            results = perform_regression(data, args.formula, args.type, var_mapping, args.normalize)
 
             # Print summary statistics
             print("\n" + "=" * 50)
@@ -1676,6 +1738,14 @@ def main():
             print("=" * 50)
             print(f"Formula: {args.formula}")
             print(f"Regression type: {args.type}")
+            if results.get('normalized_terms', False):
+                print(f"Term-wise normalization: ENABLED")
+                if results.get('normalization_info'):
+                    print("Normalization factors applied:")
+                    for info in results['normalization_info']:
+                        print(f"  {info}")
+            else:
+                print(f"Term-wise normalization: DISABLED")
             print(f"Number of observations: {results['n_obs']}")
 
             if args.type == "linear":

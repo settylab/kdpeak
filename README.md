@@ -109,6 +109,9 @@ bwops stats signal.bw --out stats.csv --format csv --chrom-sizes hg38.chrom.size
 # Add multiple BigWig files
 bwops add file1.bw file2.bw file3.bw --out sum.bw --chrom-sizes hg38.chrom.sizes
 
+# Add files with normalization (each file normalized to mean=1 before adding)
+bwops add ChIP1.bw ChIP2.bw --out normalized_sum.bw --normalize --chrom-sizes hg38.chrom.sizes
+
 # Add files excluding contigs and mitochondrial DNA
 bwops add file1.bw file2.bw --out sum.bw \
       --exclude-contigs --blacklisted-seqs chrM \
@@ -118,6 +121,9 @@ bwops add file1.bw file2.bw --out sum.bw \
 bwops multiply signal1.bw signal2.bw --out product.bw \
       --chromosome-pattern "chr[0-9]+$" \
       --chrom-sizes hg38.chrom.sizes
+
+# Multiply with normalization (each file normalized to mean=1 before multiplication)
+bwops multiply enhancer.bw promoter.bw --out normalized_product.bw --normalize --chrom-sizes hg38.chrom.sizes
 
 # Output to different formats
 bwops add file1.bw file2.bw --out results.csv --format csv
@@ -225,6 +231,14 @@ bwops regress --target "binary_target.bw" \
               --type logistic \
               --out-prediction logistic_pred.bw \
               --chrom-sizes hg38.chrom.sizes
+
+# Regression with term-wise normalization
+bwops regress --target "response.bw" \
+              --predictors "signal=ChIP_signal.bw" "background=input.bw" \
+              --formula "response ~ signal + background + signal*background" \
+              --normalize \
+              --out-prediction normalized_pred.bw \
+              --chrom-sizes hg38.chrom.sizes
 ```
 
 #### Variable Naming System
@@ -263,6 +277,58 @@ All bwops operations support comprehensive chromosome filtering (consistent with
 - `--format`: Output format (bigwig, csv, tsv, bed, json)
 
 The regression analysis operates across all chromosomes simultaneously and prints summary statistics including R², p-values, and fitted coefficients to stdout. It can output predictions, residuals, and detailed statistics to separate files.
+
+#### Normalization Features
+
+BigWig operations support two types of normalization to enable meaningful comparison and combination of signals from different experiments:
+
+##### 1. **Input Normalization** (`add`, `multiply`)
+```bash
+# Normalize each input file to mean=1 before operation
+bwops add file1.bw file2.bw --normalize --out sum.bw --chrom-sizes hg38.chrom.sizes
+bwops multiply signal1.bw signal2.bw --normalize --out product.bw --chrom-sizes hg38.chrom.sizes
+```
+
+**How it works:**
+- Each input BigWig file is normalized so its mean equals 1 (excluding zeros)
+- Then the mathematical operation (add/multiply) is performed  
+- Useful for combining signals from different experimental conditions
+- **Note**: This is separate from regression normalization
+
+##### 2. **Term-wise Normalization** (`regress`)
+```bash
+# Normalize individual terms and interaction products separately
+bwops regress --target "response.bw" \
+              --predictors "signal=ChIP.bw" "input=background.bw" \
+              --formula "response ~ signal + input + signal*input" \
+              --normalize \
+              --out-prediction pred.bw --chrom-sizes hg38.chrom.sizes
+```
+
+**How it works:**
+1. **Raw data** is used (no prior input normalization)
+2. **Individual terms** (`signal`, `input`) are normalized to mean=1
+3. **Interaction terms** (`signal*input`) are computed from normalized factors
+4. **Interaction products** are then normalized separately to mean=1
+5. **Target variable** is also normalized to mean=1
+6. Regression is performed on all normalized terms
+
+**Example output:**
+```
+Term-wise normalization: ENABLED
+Normalization factors applied:
+  Term 'signal': 1.745230
+  Term 'input': 0.856421  
+  Factor 'signal': 1.745230
+  Factor 'input': 0.856421
+  Interaction 'signal*input': 0.328156
+  Target 'response': 2.143891
+```
+
+This approach ensures that:
+- All terms are on the same scale for meaningful coefficient comparison
+- Interaction effects are properly normalized after product computation
+- The regression model focuses on relative relationships rather than absolute magnitudes
 
 ### Correlation Analysis
 
