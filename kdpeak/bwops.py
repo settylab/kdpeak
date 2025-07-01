@@ -391,35 +391,49 @@ def read_bigwig_data(
     if region:
         target_chroms = [region[0]] if region[0] in chromosomes else []
 
-    # Check if we can use fast reading for all files (explicit detection)
+    # Check if we can use fast reading for all files (robust detection)
     can_use_fast_read = {}
     for bw_file in bw_files:
         with pyBigWig.open(bw_file) as bw:
-            # Sample a chromosome to check native resolution
-            test_chrom = target_chroms[0] if target_chroms else None
-            if test_chrom and test_chrom in bw.chroms():
-                sample_intervals = bw.intervals(
-                    test_chrom, 0, min(100000, bw.chroms()[test_chrom])
+            # Sample multiple chromosomes and regions to find intervals (more robust)
+            found_intervals = False
+            native_spans = set()
+            
+            # Try multiple chromosomes and regions to find data
+            for test_chrom in target_chroms[:5]:  # Check first few target chromosomes
+                if test_chrom in bw.chroms():
+                    chrom_size = bw.chroms()[test_chrom]
+                    # Sample from different parts of the chromosome
+                    sample_regions = [
+                        (0, min(100000, chrom_size)),
+                        (chrom_size // 2, min(chrom_size // 2 + 100000, chrom_size)),
+                        (max(0, chrom_size - 100000), chrom_size),
+                    ]
+                    
+                    for start, end in sample_regions:
+                        sample_intervals = bw.intervals(test_chrom, start, end)
+                        if sample_intervals:
+                            found_intervals = True
+                            for interval_start, interval_end, _ in sample_intervals[:20]:
+                                interval_span = interval_end - interval_start
+                                if interval_span > 0:
+                                    native_spans.add(interval_span)
+                            if len(native_spans) >= 10:  # Found enough samples
+                                break
+                    if found_intervals and len(native_spans) >= 5:
+                        break
+            
+            if found_intervals and native_spans:
+                # Check if target span is present in the file's native spans
+                spans_match = span in native_spans
+                can_use_fast_read[bw_file] = spans_match
+                logger.debug(
+                    f"File {os.path.basename(bw_file)}: found spans {sorted(native_spans)}, target={span}, can_use_fast={spans_match}"
                 )
-                if sample_intervals:
-                    native_spans = {
-                        end - start for start, end, _ in sample_intervals[:50]
-                    }
-                    # Check if target span is present in the file
-                    spans_match = span in native_spans
-                    can_use_fast_read[bw_file] = spans_match
-                    logger.debug(
-                        f"File {os.path.basename(bw_file)}: found spans {sorted(native_spans)}, target={span}, can_use_fast={spans_match}"
-                    )
-                else:
-                    can_use_fast_read[bw_file] = False
-                    logger.debug(
-                        f"File {os.path.basename(bw_file)}: no intervals found, can_use_fast=False"
-                    )
             else:
                 can_use_fast_read[bw_file] = False
                 logger.debug(
-                    f"File {os.path.basename(bw_file)}: test_chrom={test_chrom} not available, can_use_fast=False"
+                    f"File {os.path.basename(bw_file)}: no intervals found in sampled regions, can_use_fast=False"
                 )
 
     fast_files = [f for f, can_fast in can_use_fast_read.items() if can_fast]
