@@ -49,6 +49,11 @@ def parse_arguments(args=None):
         default="bigwig",
         help="Output format (default: bigwig)",
     )
+    add_parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Normalize each BigWig file so that its mean equals 1 before adding",
+    )
 
     # Multiply operation
     mult_parser = subparsers.add_parser(
@@ -63,6 +68,11 @@ def parse_arguments(args=None):
         choices=["bigwig", "csv", "bed", "tsv", "json"],
         default="bigwig",
         help="Output format (default: bigwig)",
+    )
+    mult_parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Normalize each BigWig file so that its mean equals 1 before multiplying",
     )
 
     # Regression operation
@@ -100,6 +110,11 @@ def parse_arguments(args=None):
         choices=["bigwig", "csv", "bed", "tsv", "json"],
         default="bigwig",
         help="Output format (default: bigwig)",
+    )
+    regress_parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Normalize each BigWig file so that its mean equals 1 before regression",
     )
 
     # Stats operation
@@ -870,6 +885,83 @@ def write_bigwig_output(
             )
 
 
+def normalize_bigwig_data(data: pd.DataFrame, logger: logging.Logger = None) -> pd.DataFrame:
+    """
+    Normalize BigWig data so that the mean of each file equals 1.
+    
+    This is useful for comparing and combining signals from different experiments
+    by putting them on the same scale.
+    
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Data with columns ['chromosome', 'start', 'end'] and BigWig value columns (bw_*)
+    logger : logging.Logger, optional
+        Logger for progress messages
+        
+    Returns
+    -------
+    pd.DataFrame
+        Normalized data where each BigWig column has mean = 1
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    # Create a copy to avoid modifying the original data
+    normalized_data = data.copy()
+    
+    # Find all BigWig value columns
+    bw_cols = [col for col in data.columns if col.startswith("bw_")]
+    
+    if not bw_cols:
+        logger.warning("No BigWig value columns found for normalization")
+        return normalized_data
+    
+    logger.info(f"Normalizing {len(bw_cols)} BigWig files to mean = 1...")
+    
+    normalization_factors = {}
+    
+    for col in bw_cols:
+        # Calculate mean, excluding zeros for more meaningful normalization
+        non_zero_values = data[col][data[col] != 0]
+        
+        if len(non_zero_values) == 0:
+            logger.warning(f"Column {col} contains only zeros - cannot normalize")
+            normalization_factors[col] = 1.0
+            continue
+            
+        # Use mean of non-zero values for normalization
+        mean_val = non_zero_values.mean()
+        
+        if mean_val == 0:
+            logger.warning(f"Column {col} has zero mean - cannot normalize")
+            normalization_factors[col] = 1.0
+            continue
+            
+        normalization_factor = 1.0 / mean_val
+        normalization_factors[col] = normalization_factor
+        
+        # Apply normalization
+        normalized_data[col] = data[col] * normalization_factor
+        
+        # Verify normalization (check non-zero mean)
+        new_mean = normalized_data[col][normalized_data[col] != 0].mean()
+        
+        logger.info(f"  {col}: original mean = {mean_val:.6f}, "
+                   f"normalization factor = {normalization_factor:.6f}, "
+                   f"new mean = {new_mean:.6f}")
+    
+    # Log overall statistics
+    logger.info("Normalization completed:")
+    for col in bw_cols:
+        original_mean = data[col].mean()
+        normalized_mean = normalized_data[col].mean() 
+        logger.info(f"  {col}: {original_mean:.6f} → {normalized_mean:.6f} "
+                   f"(factor: {normalization_factors[col]:.6f})")
+    
+    return normalized_data
+
+
 def compute_statistics(
     data: pd.DataFrame, input_file: str, percentiles: List[float] = None
 ) -> Dict:
@@ -1493,6 +1585,10 @@ def main():
             return
 
         logger.info(f"Read {len(data)} data points")
+
+        # Apply normalization if requested
+        if hasattr(args, 'normalize') and args.normalize:
+            data = normalize_bigwig_data(data, logger)
 
         # Perform operation
         if args.operation == "add":
