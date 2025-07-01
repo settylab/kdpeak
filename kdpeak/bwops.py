@@ -440,61 +440,70 @@ def read_bigwig_data(
     total_chroms = len(target_chroms)
     logger.info(f"Reading data from {total_chroms} chromosomes...")
 
-    for chrom_idx, chrom in enumerate(target_chroms):
-        # Simple progress indicator
-        progress_pct = (chrom_idx / total_chroms) * 100
-        logger.info(
-            f"[{progress_pct:5.1f}%] Processing {chrom} ({chrom_idx+1}/{total_chroms})"
-        )
+    # OPTIMIZATION: Open all BigWig files once and keep them open for batch processing
+    opened_bw_files = {}
+    try:
+        # Open all BigWig files at the start
+        for bw_file in bw_files:
+            opened_bw_files[bw_file] = pyBigWig.open(bw_file)
+            logger.debug(f"Opened BigWig file: {os.path.basename(bw_file)}")
 
-        # Determine chromosome bounds
-        chrom_start = 0
-        chrom_end = None
-
-        if region and region[0] == chrom:
-            chrom_start = region[1]
-            chrom_end = region[2]
-        else:
-            # Get chromosome size from first BigWig file
-            with pyBigWig.open(bw_files[0]) as bw:
-                if chrom in bw.chroms():
-                    chrom_end = bw.chroms()[chrom]
-
-        if chrom_end is None:
-            logger.warning(f"Cannot determine size for chromosome {chrom}")
-            continue
-
-        # Use efficient grid-based approach but with native span
-        coords = np.arange(chrom_start, chrom_end, span)
-        if len(coords) == 0:
-            continue
-
-        # Warn if this will create a very large number of intervals AND we're using slow stats reading
-        slow_files_for_chrom = [
-            f for f in bw_files if not can_use_fast_read.get(f, False)
-        ]
-        if (
-            len(coords) > 1_000_000 and slow_files_for_chrom
-        ):  # 1M intervals AND slow files
-            logger.warning(
-                f"Chromosome {chrom} has {len(coords):,} intervals - will be slow for {len(slow_files_for_chrom)} files using stats reading"
-            )
-            logger.warning(
-                "Consider using --span with a larger value or --region to limit analysis"
+        # Process all chromosomes with opened files
+        for chrom_idx, chrom in enumerate(target_chroms):
+            # Simple progress indicator
+            progress_pct = (chrom_idx / total_chroms) * 100
+            logger.info(
+                f"[{progress_pct:5.1f}%] Processing {chrom} ({chrom_idx+1}/{total_chroms})"
             )
 
-        logger.debug(
-            f"Chromosome {chrom}: {len(coords):,} intervals at {span}bp resolution"
-        )
+            # Determine chromosome bounds
+            chrom_start = 0
+            chrom_end = None
 
-        # Create DataFrame for this chromosome
-        chrom_data = {"chromosome": chrom, "start": coords, "end": coords + span}
+            if region and region[0] == chrom:
+                chrom_start = region[1]
+                chrom_end = region[2]
+            else:
+                # Get chromosome size from first BigWig file
+                first_bw = opened_bw_files[bw_files[0]]
+                if chrom in first_bw.chroms():
+                    chrom_end = first_bw.chroms()[chrom]
 
-        # Read data from each BigWig file efficiently
-        for i, bw_file in enumerate(bw_files):
-            col_name = f"bw_{i}_{os.path.basename(bw_file).replace('.bw', '').replace('.bigwig', '')}"
+            if chrom_end is None:
+                logger.warning(f"Cannot determine size for chromosome {chrom}")
+                continue
 
-            with pyBigWig.open(bw_file) as bw:
+            # Use efficient grid-based approach but with native span
+            coords = np.arange(chrom_start, chrom_end, span)
+            if len(coords) == 0:
+                continue
+
+            # Warn if this will create a very large number of intervals AND we're using slow stats reading
+            slow_files_for_chrom = [
+                f for f in bw_files if not can_use_fast_read.get(f, False)
+            ]
+            if (
+                len(coords) > 1_000_000 and slow_files_for_chrom
+            ):  # 1M intervals AND slow files
+                logger.warning(
+                    f"Chromosome {chrom} has {len(coords):,} intervals - will be slow for {len(slow_files_for_chrom)} files using stats reading"
+                )
+                logger.warning(
+                    "Consider using --span with a larger value or --region to limit analysis"
+                )
+
+            logger.debug(
+                f"Chromosome {chrom}: {len(coords):,} intervals at {span}bp resolution"
+            )
+
+            # Create DataFrame for this chromosome
+            chrom_data = {"chromosome": chrom, "start": coords, "end": coords + span}
+
+            # Read data from each BigWig file efficiently using opened files
+            for i, bw_file in enumerate(bw_files):
+                col_name = f"bw_{i}_{os.path.basename(bw_file).replace('.bw', '').replace('.bigwig', '')}"
+                bw = opened_bw_files[bw_file]
+
                 if chrom not in bw.chroms():
                     chrom_data[col_name] = np.zeros(len(coords))
                     continue
@@ -571,9 +580,18 @@ def read_bigwig_data(
 
                 chrom_data[col_name] = values
 
-        # Convert to DataFrame and add to results
-        if len(coords) > 0:
-            all_data.append(pd.DataFrame(chrom_data))
+            # Convert to DataFrame and add to results
+            if len(coords) > 0:
+                all_data.append(pd.DataFrame(chrom_data))
+
+    finally:
+        # Ensure all BigWig files are properly closed
+        for bw_file, bw_obj in opened_bw_files.items():
+            try:
+                bw_obj.close()
+                logger.debug(f"Closed BigWig file: {os.path.basename(bw_file)}")
+            except Exception as e:
+                logger.warning(f"Error closing {os.path.basename(bw_file)}: {e}")
 
     if not all_data:
         return pd.DataFrame()
